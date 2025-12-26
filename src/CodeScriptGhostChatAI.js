@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GhostChatAI
 // @namespace    https://github.com/DREwX-code
-// @version      1.0.1
+// @version      1.0.2
 // @description  Lightweight floating AI chat panel that works on any webpage. Free and no signup required. Uses Pollinations.ai for text and image generation, supports multiple conversations, reasoning levels, response styles, image tools, and a privacy-focused Ghost Mode.
 // @author       Dℝ∃wX
 // @match        *://*/*
@@ -65,6 +65,7 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
                 { id: 'geek', label: 'Geek', desc: 'Tech jargon and references' },
                 { id: 'persuasive', label: 'Persuasive', desc: 'Structured and convincing' }
             ];
+            this.DEFAULT_GREETING = 'Hello! I am GhostChat. How can I help you today?';
             this.host = null;
             this.shadow = null;
             this.elements = {};
@@ -80,12 +81,13 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
                 isImageMode: false,
                 reasoningEffort: 'low',
                 responseStyle: 'default',
-                manualTitle: null
+                manualTitle: null,
+                historySearchTerm: ''
             };
             this.history = [];
             this.currentChatId = Date.now(); // Start with a new session ID
             this.messages = [
-                { role: 'assistant', content: 'Hello! I am GhostChat. How can I help you today?' }
+                { role: 'assistant', content: this.DEFAULT_GREETING }
             ];
 
             this.init();
@@ -509,7 +511,7 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
                 /* History Panel (Overlay) */
                 .gc-history {
                     position: absolute;
-                    inset: 58px 0 0 0; /* Below header */
+                    inset: 58px 0 0 0;
                     background: #17171c;
                     z-index: 5;
                     display: flex;
@@ -563,7 +565,66 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
                 .gc-history-item:hover { background: rgba(255,255,255,0.05); color: var(--gc-text); }
                 .gc-history-item.active { background: rgba(139, 92, 246, 0.1); color: var(--gc-primary); }
 
+                .gc-history-actions {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                }
+                .gc-history-search {
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    position: relative;
+                }
+                .gc-search-btn {
+                    background: none;
+                    border: none;
+                    color: var(--gc-text-muted);
+                    width: 28px;
+                    height: 28px;
+                    border-radius: 6px;
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                }
+                .gc-search-btn:hover { color: var(--gc-primary); background: rgba(139, 92, 246, 0.12); }
+                .gc-search-btn svg { width: 16px; height: 16px; }
+                .gc-search-input {
+                    width: 0;
+                    opacity: 0;
+                    padding: 6px 0;
+                    border: 1px solid var(--gc-border);
+                    background: rgba(255, 255, 255, 0.04);
+                    color: var(--gc-text);
+                    border-radius: 8px;
+                    font-size: 13px;
+                    transition: all 0.2s ease;
+                    pointer-events: none;
+                }
+                .gc-history-search.active .gc-search-input {
+                    width: 180px;
+                    opacity: 1;
+                    padding: 6px 8px;
+                    pointer-events: auto;
+                }
+                .gc-search-input::placeholder { color: var(--gc-text-muted); }
+
                 .gc-h-title { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 48px; }
+                .gc-h-title.gc-h-editing {
+                    width: calc(100% - 64px);
+                    padding-right: 12px;
+                    outline: 1.5px solid var(--gc-primary);
+                    outline-offset: 2px;
+                    border-radius: 8px;
+                    background: rgba(255, 255, 255, 0.04);
+                    cursor: text;
+                    white-space: normal;
+                    overflow: visible;
+                    text-overflow: unset;
+                    word-break: break-word;
+                }
                 .gc-h-date { font-size: 11px; opacity: 0.6; }
 
                 .gc-h-rename,
@@ -590,6 +651,13 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
                 .gc-h-delete:hover { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
                 .gc-h-rename svg,
                 .gc-h-delete svg { width: 14px; height: 14px; }
+
+                .gc-history-empty {
+                    padding: 16px;
+                    text-align: center;
+                    color: var(--gc-text-muted);
+                    font-size: 13px;
+                }
 
                 /* Messages */
                 .gc-messages {
@@ -943,7 +1011,6 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
         }
 
         createUI() {
-            // ... (trigger code remains)
             const trigger = document.createElement('div');
             trigger.className = 'gc-trigger';
             trigger.innerHTML = `
@@ -1029,7 +1096,7 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
                     <div class="gc-info-grid">
                         <div class="gc-info-card variant-a">
                             <h4>Version</h4>
-                            <p>1.0.0<br>Last updated: 2025-12-26</p>
+                            <p>1.0.2<br>Last updated: 2025-12-26</p>
                         </div>
 
                         <div class="gc-info-card variant-b">
@@ -1114,9 +1181,17 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
                 <div class="gc-history" id="gc-history-panel">
                     <div class="gc-history-header">
                         <span>Recent Conversations</span>
-                        <button class="gc-clear-all" id="gc-btn-clear-all" title="Clear All History">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                        </button>
+                        <div class="gc-history-actions">
+                            <div class="gc-history-search" id="gc-history-search">
+                                <button class="gc-search-btn" id="gc-btn-history-search" title="Search for discussions">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="6"/><line x1="16.5" y1="16.5" x2="21" y2="21" stroke-linecap="round"/></svg>
+                                </button>
+                                <input type="text" class="gc-search-input" id="gc-input-history-search" placeholder="Search..." spellcheck="false" aria-label="Search conversations">
+                            </div>
+                            <button class="gc-clear-all" id="gc-btn-clear-all" title="Clear All History">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                            </button>
+                        </div>
                     </div>
                     <div class="gc-history-list" id="gc-history-list"></div>
                 </div>
@@ -1172,6 +1247,9 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
                 infoPanel: panel.querySelector('#gc-info-panel'),
                 historyPanel: panel.querySelector('#gc-history-panel'),
                 historyList: panel.querySelector('#gc-history-list'),
+                historySearchWrap: panel.querySelector('#gc-history-search'),
+                historySearchInput: panel.querySelector('#gc-input-history-search'),
+                historySearchBtn: panel.querySelector('#gc-btn-history-search'),
                 msgContainer: panel.querySelector('#gc-messages'),
                 input: panel.querySelector('.gc-input'),
                 sendBtn: panel.querySelector('.gc-send-btn'),
@@ -1194,6 +1272,10 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
             this.elements.historyBtn.addEventListener('click', () => this.toggleHistory());
             this.elements.newChatBtn.addEventListener('click', () => this.startNewChat());
             this.elements.clearAllBtn.addEventListener('click', () => this.clearAllHistory());
+            this.elements.historySearchBtn.addEventListener('click', () => this.toggleHistorySearch());
+            this.elements.historySearchInput.addEventListener('input', (e) => this.handleHistorySearch(e.target.value));
+            this.elements.historySearchInput.addEventListener('keydown', (e) => this.handleHistorySearchKeydown(e));
+            this.elements.historySearchInput.addEventListener('blur', () => this.handleHistorySearchBlur());
             this.elements.modelSelect.addEventListener('change', (e) => this.changeReasoningEffort(e.target.value));
             this.elements.toggleExtraBtn.addEventListener('click', () => this.toggleHeaderExtra());
             this.elements.settingsBtn.addEventListener('click', () => this.toggleSettingsPanel());
@@ -1414,6 +1496,53 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
             if (this.state.isHistoryOpen) this.renderHistoryList();
         }
 
+        toggleHistorySearch() {
+            if (!this.elements.historySearchWrap || !this.elements.historySearchInput) return;
+            const isActive = this.elements.historySearchWrap.classList.contains('active');
+            if (isActive && !this.state.historySearchTerm) {
+                this.resetHistorySearch();
+                return;
+            }
+            this.elements.historySearchWrap.classList.add('active');
+            this.elements.historySearchInput.focus();
+            this.elements.historySearchInput.select();
+        }
+
+        handleHistorySearch(value) {
+            this.state.historySearchTerm = (value || '').trim();
+            if (this.state.historySearchTerm) {
+                this.elements.historySearchWrap.classList.add('active');
+            }
+            this.renderHistoryList();
+        }
+
+        handleHistorySearchKeydown(e) {
+            if (e.key === 'Escape') {
+                e.stopPropagation();
+                if (this.state.historySearchTerm) {
+                    this.resetHistorySearch();
+                } else if (this.elements.historySearchWrap) {
+                    this.elements.historySearchWrap.classList.remove('active');
+                }
+            }
+        }
+
+        handleHistorySearchBlur() {
+            if (!this.state.historySearchTerm && this.elements.historySearchWrap) {
+                this.elements.historySearchWrap.classList.remove('active');
+            }
+        }
+
+        resetHistorySearch() {
+            this.state.historySearchTerm = '';
+            if (this.elements.historySearchInput) {
+                this.elements.historySearchInput.value = '';
+                this.elements.historySearchInput.blur();
+            }
+            if (this.elements.historySearchWrap) this.elements.historySearchWrap.classList.remove('active');
+            this.renderHistoryList();
+        }
+
         startNewChat() {
             this.currentChatId = Date.now();
             this.messages = [];
@@ -1423,7 +1552,7 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
             // Clear UI
             this.elements.msgContainer.innerHTML = '';
             this.elements.msgContainer.appendChild(this.elements.typingIndicator);
-            this.appendMessage('assistant', 'Hello! I am GhostChat. How can I help you today?');
+            this.appendMessage('assistant', this.DEFAULT_GREETING);
 
             this.state.isHistoryOpen = false;
             this.elements.historyPanel.classList.remove('visible');
@@ -1529,6 +1658,7 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
                 this.history = [];
                 GM_setValue('ghostchat_history', '');
                 this.setActiveChatId('');
+                this.resetHistorySearch();
                 this.startNewChat();
             });
         }
@@ -1552,9 +1682,11 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
             const titleEl = item.querySelector('.gc-h-title');
             if (!titleEl) return;
 
+            const maxLength = 90;
             const original = chat.manualTitle || chat.title || 'Conversation';
             titleEl.contentEditable = 'true';
             titleEl.spellcheck = false;
+            titleEl.classList.add('gc-h-editing');
             titleEl.focus();
 
             const range = document.createRange();
@@ -1562,6 +1694,11 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
             const sel = window.getSelection();
             sel.removeAllRanges();
             sel.addRange(range);
+
+            const blockOpen = (evt) => evt.stopPropagation();
+            titleEl.addEventListener('mousedown', blockOpen);
+            titleEl.addEventListener('mouseup', blockOpen);
+            titleEl.addEventListener('click', blockOpen);
 
             const persist = (text) => {
                 const cleaned = text.trim();
@@ -1574,19 +1711,40 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
                 GM_setValue('ghostchat_history', JSON.stringify(this.history));
             };
 
+            const enforceMax = () => {
+                const current = titleEl.textContent || '';
+                if (current.length > maxLength) {
+                    titleEl.textContent = current.slice(0, maxLength);
+                    const selection = window.getSelection();
+                    const newRange = document.createRange();
+                    newRange.selectNodeContents(titleEl);
+                    newRange.collapse(false);
+                    selection.removeAllRanges();
+                    selection.addRange(newRange);
+                    return titleEl.textContent;
+                }
+                return current;
+            };
+
             const handleInput = () => {
-                persist(titleEl.textContent || '');
+                const text = enforceMax();
+                persist(text);
             };
 
             const finish = (commit = true) => {
                 titleEl.removeEventListener('input', handleInput);
                 titleEl.removeEventListener('keydown', handleKey);
                 titleEl.removeEventListener('blur', handleBlur);
+                titleEl.removeEventListener('mousedown', blockOpen);
+                titleEl.removeEventListener('mouseup', blockOpen);
+                titleEl.removeEventListener('click', blockOpen);
+                titleEl.classList.remove('gc-h-editing');
                 titleEl.contentEditable = 'false';
                 if (!commit) {
                     titleEl.textContent = original;
                 } else {
-                    persist(titleEl.textContent || original);
+                    const text = enforceMax();
+                    persist(text || original);
                 }
             };
 
@@ -1619,9 +1777,39 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
             this.toggleHistory(); // Close history
         }
 
+        isDefaultGreeting(msg, index = 0) {
+            return index === 0 && msg?.role === 'assistant' && msg?.content === this.DEFAULT_GREETING;
+        }
+
         renderHistoryList() {
             this.elements.historyList.innerHTML = '';
-            this.history.forEach(chat => {
+            const query = (this.state.historySearchTerm || '').trim().toLowerCase();
+
+            if (this.elements.historySearchInput) {
+                this.elements.historySearchInput.value = this.state.historySearchTerm || '';
+                const isFocused = (this.shadow && this.shadow.activeElement === this.elements.historySearchInput) ||
+                    document.activeElement === this.elements.historySearchInput ||
+                    this.elements.historySearchInput.matches(':focus');
+                const keepOpen = !!this.state.historySearchTerm || isFocused;
+                this.elements.historySearchWrap.classList.toggle('active', keepOpen);
+            }
+
+            const items = query
+                ? this.history.filter(chat => {
+                    const title = (chat.manualTitle || chat.title || '').toLowerCase();
+                    return title.includes(query);
+                })
+                : this.history;
+
+            if (!items.length) {
+                const empty = document.createElement('div');
+                empty.className = 'gc-history-empty';
+                empty.textContent = query ? 'Aucune discussion trouvée.' : 'No conversations yet.';
+                this.elements.historyList.appendChild(empty);
+                return;
+            }
+
+            items.forEach(chat => {
                 const item = document.createElement('div');
                 item.className = 'gc-history-item';
                 if (chat.id === this.currentChatId) item.classList.add('active');
@@ -2367,6 +2555,7 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
             this.elements.msgContainer.appendChild(this.elements.typingIndicator);
 
             this.messages.forEach((msg, messageIndex) => {
+                const isGreeting = this.isDefaultGreeting(msg, messageIndex);
                 const div = document.createElement('div');
                 div.className = `gc-message ${msg.role}`;
 
@@ -2412,7 +2601,7 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
                 div.appendChild(contentDiv);
 
                 // Add action buttons for assistant messages (only if not loading)
-                if (msg.role === 'assistant') {
+                if (msg.role === 'assistant' && !isGreeting) {
                     const actions = document.createElement('div');
                     actions.className = 'gc-message-actions';
 
@@ -2657,6 +2846,8 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
         }
 
         appendMessage(role, content, isHtml = false) {
+            const messageIndex = this.messages.length;
+            const isGreeting = this.isDefaultGreeting({ role, content }, messageIndex);
             const div = document.createElement('div');
             div.className = `gc-message ${role}`;
 
@@ -2672,7 +2863,7 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
             div.appendChild(contentDiv);
 
             // Add action buttons for assistant messages
-            if (role === 'assistant') {
+            if (role === 'assistant' && !isGreeting) {
                 const actions = document.createElement('div');
                 actions.className = 'gc-message-actions';
 
@@ -2705,7 +2896,6 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
                 }
 
                 // Regenerate button for all assistant messages
-                const messageIndex = this.messages.length; // Will be the index after push
                 const regenBtn = document.createElement('button');
                 regenBtn.className = 'gc-action-btn';
                 regenBtn.title = 'Regenerate';
