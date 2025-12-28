@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NeuraVeil — AI Chat in Your Browser
 // @namespace    https://github.com/DREwX-code
-// @version      1.0.7
+// @version      1.0.8
 // @description  Lightweight floating AI chat panel that works on any webpage. Free and no signup required. Uses Pollinations.ai for text and image generation, supports multiple conversations, reasoning levels, response styles, image tools, and a privacy-focused Ghost Mode.
 // @author       Dℝ∃wX
 // @match        *://*/*
@@ -1181,7 +1181,7 @@ Source code: https://github.com/highlightjs/highlight.js
                     <div class="gc-info-grid">
                         <div class="gc-info-card variant-a">
                             <h4>Version</h4>
-                            <p>1.0.7<br>Last updated: 2025-12-28</p>
+                            <p>1.0.8<br>Last updated: 2025-12-28</p>
                         </div>
 
                         <div class="gc-info-card variant-b">
@@ -1294,7 +1294,7 @@ Source code: https://github.com/highlightjs/highlight.js
                     <button class="gc-send-btn">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
                     </button>
-                    <span class="gc-ghost-pill" id="gc-ghost-pill">Ghost mode active</span>
+                    <span class="gc-ghost-pill" id="gc-ghost-pill">Mode fantome actif</span>
                 </div>
 
                 <div class="gc-modal-overlay" id="gc-modal-overlay">
@@ -3344,18 +3344,17 @@ applyHighlighting(container) {
             const recentHistory = sourceHistory.slice(-6);
             const reasoningLevel = reasoningOverride || this.state.reasoningEffort;
             const stylePrompt = this.getStylePrompt();
-            const baseSystemPrompt = `You are NeuraVeil, a helpful and concise AI assistant living in a browser overlay.${stylePrompt ? `\n\nStyle:\n${stylePrompt}` : ''}`;
-            const toolSpec = `Tools (function-call format):
+            const baseSystemPrompt = `You are NeuraVeil, a helpful and concise AI assistant living in a browser overlay.${stylePrompt ? `\n\nStyle:\n${stylePrompt}` : ''}\n\nCode formatting rule:\n- Any code you return must be wrapped in a markdown code fence with a language (e.g., \`\`\`js ...\`\`\`) or in [tool:code lang=\"...\"] blocks. Do NOT leave code as plain text.`;
+            const toolSpec = `Tools:
                 - generate_image: [tool:generate_image prompt="..."]
                 - show_image: [tool:show_image query="..." alt="..."] or [tool:show_image url="..." alt="..."]
                 - link: [tool:link url="..." text="..."]
-                - code: [tool:code lang="js"]...[/tool:code]
+                - code: [tool:code lang="js"]...[/tool:code]  (preferred for code)
 
-                Tool rules:
-                - Use only the tool tags above when you need special rendering.
-                - Do not output raw HTML.
-                - You may mix normal text with tool calls.
-                - For code, do not use markdown fences.`;
+                Rules:
+                - You may also use Markdown code fences (\\\`\\\`\\\`lang ... \\\`\\\`\\\`). Either fences or [tool:code] is accepted.
+                - Never output raw HTML.
+                - Mix normal text and tool calls as needed.`;
                         const highModePrompt = `You are in HIGH reasoning mode.
 
                 Instructions:
