@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NeuraVeil — AI Chat in Your Browser
 // @namespace    https://github.com/DREwX-code
-// @version      1.0.6
+// @version      1.0.7
 // @description  Lightweight floating AI chat panel that works on any webpage. Free and no signup required. Uses Pollinations.ai for text and image generation, supports multiple conversations, reasoning levels, response styles, image tools, and a privacy-focused Ghost Mode.
 // @author       Dℝ∃wX
 // @match        *://*/*
@@ -38,16 +38,25 @@ NeuraVeil
 --------------------------------
 
 AI Backend:
-This project uses public, open-source endpoints provided by Pollinations.ai
-License: MIT. No proprietary models are hosted or redistributed.
-Source: https://github.com/pollinations/pollinations
+This project uses public, open-source endpoints provided by Pollinations.ai.
+License: MIT.
+No proprietary models are hosted or redistributed.
+Website: https://pollinations.ai/
+Source code: https://github.com/pollinations/pollinations
 
-GreasyFork SVG icon :
-By denilsonsa
-License: not explicitly declared (use with credit)
+GreasyFork SVG Icon:
+Created by denilsonsa.
+License: Not explicitly declared (used with attribution).
 Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/GreasyFork.svg
 
+Third-Party Libraries:
+This project uses Highlight.js for syntax highlighting.
+License: BSD 3-Clause.
+Website: https://highlightjs.org/
+Source code: https://github.com/highlightjs/highlight.js
 */
+
+
 
 (function () {
     'use strict';
@@ -67,6 +76,8 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
             ];
             this.INPUT_MAX_ROWS = 5;
             this.DEFAULT_GREETING = 'Hello! I am NeuraVeil. How can I help you today?';
+            this.hljsReady = null;
+            this.hljsCssLoaded = false;
             this.host = null;
             this.shadow = null;
             this.elements = {};
@@ -95,6 +106,26 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
 
             this.init();
         }
+
+        loadHighlightJS() {
+    if (this.hljsReady) return this.hljsReady;
+
+    this.hljsReady = new Promise((resolve) => {
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css';
+        this.shadow.appendChild(link);
+
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js';
+        script.onload = () => resolve();
+        this.shadow.appendChild(script);
+    });
+
+    return this.hljsReady;
+}
+
+
 
         init() {
             this.loadHistory();
@@ -749,7 +780,7 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
                 }
                 .gc-inline-link:hover { color: var(--gc-primary); }
                 .gc-tool-code {
-                    background: rgba(0, 0, 0, 0.25);
+                    background: rgb(12, 17, 23);
                     border-radius: 12px;
                     border: 1px solid var(--gc-border);
                     padding: 10px;
@@ -760,7 +791,41 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
                     font-size: 11px;
                     color: var(--gc-text-muted);
                     margin-bottom: 8px;
+                    align-items: center;
+                    gap: 8px;
                 }
+                .gc-code-left {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                }
+                .gc-code-label { text-transform: uppercase; letter-spacing: 0.04em; }
+                .gc-code-copy {
+                    background: transparent;
+                    border: none;
+                    border-radius: 4px;
+                    width: 24px;
+                    height: 24px;
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    color: var(--gc-text-muted);
+                    cursor: pointer;
+                    transition: all 0.2s;
+                }
+                .gc-code-copy:hover { color: var(--gc-primary); background: rgba(139, 92, 246, 0.08); }
+                .gc-code-copy svg { width: 14px; height: 14px; }
+                .gc-code-lang { font-variant: small-caps; }
+                .gc-code-keyword { color: #c084fc; }
+                .gc-code-string { color: #86efac; }
+                .gc-code-number { color: #f472b6; }
+                .gc-code-comment { color: #9ca3af; font-style: italic; }
+                .gc-code-plain { color: var(--gc-text); }
+                .hljs { display: block; overflow-x: auto; padding: 0; background: transparent; color: var(--gc-text); }
+                .hljs-keyword, .hljs-meta-keyword { color: #c084fc; }
+                .hljs-string, .hljs-attr, .hljs-attribute { color: #86efac; }
+                .hljs-number, .hljs-literal { color: #f472b6; }
+                .hljs-comment { color: #9ca3af; font-style: italic; }
                 .gc-tool-code pre {
                     margin: 0;
                     padding: 0;
@@ -768,9 +833,10 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
                     font-size: 12px;
                     line-height: 1.5;
                     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+                    color: var(--gc-text);
                 }
                 .gc-code-block {
-                    background: rgba(0, 0, 0, 0.25);
+                    background: rgb(12, 17, 23);
                     border-radius: 12px;
                     border: 1px solid var(--gc-border);
                     padding: 10px;
@@ -1115,7 +1181,7 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
                     <div class="gc-info-grid">
                         <div class="gc-info-card variant-a">
                             <h4>Version</h4>
-                            <p>1.0.6<br>Last updated: 2025-12-28</p>
+                            <p>1.0.7<br>Last updated: 2025-12-28</p>
                         </div>
 
                         <div class="gc-info-card variant-b">
@@ -1228,7 +1294,7 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
                     <button class="gc-send-btn">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
                     </button>
-                    <span class="gc-ghost-pill" id="gc-ghost-pill">Mode fantome actif</span>
+                    <span class="gc-ghost-pill" id="gc-ghost-pill">Ghost mode active</span>
                 </div>
 
                 <div class="gc-modal-overlay" id="gc-modal-overlay">
@@ -1430,6 +1496,62 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
             el.style.overflowY = el.scrollHeight > maxHeight ? 'auto' : 'hidden';
         }
 
+        async ensureHighlight() {
+            if (this.hljsReady) return this.hljsReady;
+            this.hljsReady = new Promise((resolve) => {
+                if (!this.hljsCssLoaded) {
+                    const link = document.createElement('link');
+                    link.rel = 'stylesheet';
+                    link.href = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css';
+                    this.shadow.appendChild(link);
+                    this.hljsCssLoaded = true;
+                }
+
+                if (window.hljs) {
+                    resolve(window.hljs);
+                    return;
+                }
+
+                const script = document.createElement('script');
+                script.src = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js';
+                script.onload = () => resolve(window.hljs || null);
+                script.onerror = () => resolve(null);
+                this.shadow.appendChild(script);
+            });
+            return this.hljsReady;
+        }
+
+applyHighlighting(container) {
+    this.loadHighlightJS().then(() => {
+        container.querySelectorAll('pre code').forEach(codeEl => {
+            hljs.highlightElement(codeEl);
+        });
+    });
+}
+
+
+
+        copyTextToClipboard(text) {
+            if (!text) return;
+            const fallbackCopy = () => {
+                const area = document.createElement('textarea');
+                area.value = text;
+                area.setAttribute('readonly', '');
+                area.style.position = 'fixed';
+                area.style.top = '-9999px';
+                document.body.appendChild(area);
+                area.select();
+                try { document.execCommand('copy'); } catch (e) { /* ignore */ }
+                document.body.removeChild(area);
+            };
+
+            // Try modern API, but always run fallback immediately to stay in the user gesture.
+            if (navigator.clipboard?.writeText) {
+                navigator.clipboard.writeText(text).catch(() => {});
+            }
+            fallbackCopy();
+        }
+
         getStylePrompt() {
             switch (this.state.responseStyle) {
                 case 'professional':
@@ -1499,7 +1621,11 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
                 }
 
             } catch (error) {
-                this.appendMessageToChat(requestChatId, 'assistant', '⚠️ Error generating image.');
+                this.appendMessageToChat(
+                    requestChatId,
+                    'assistant',
+                    'Error • Unable to generate image. Check your connection or try again in a moment.'
+                );
                 console.error('NeuraVeil Image Error:', error);
             } finally {
                 this.setLoading(false, requestChatId);
@@ -2357,6 +2483,22 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
             });
         }
 
+        initCodeCopy(container) {
+            const buttons = container.querySelectorAll('.gc-code-copy');
+            buttons.forEach((btn) => {
+                if (btn.dataset.gcCopyBound === '1') return;
+                btn.dataset.gcCopyBound = '1';
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const wrapper = btn.closest('.gc-tool-code, .gc-code-block');
+                    const codeEl = wrapper?.querySelector('code');
+                    const text = codeEl?.textContent || '';
+                    if (!text.trim()) return;
+                    this.copyTextToClipboard(text);
+                });
+            });
+        }
+
         renderTextWithBareUrls(text) {
             const urlRegex = /(https?:\/\/[^\s<]+)/g;
             let html = '';
@@ -2469,10 +2611,11 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
 
                 const lang = (match[1] || '').trim();
                 const langLabel = lang ? this.escapeHtml(lang) : 'Plain';
-                const langClass = lang ? lang.toLowerCase().replace(/[^a-z0-9_-]/g, '') : '';
-                const code = this.escapeHtml(match[2].replace(/\s+$/, ''));
-                const codeClass = langClass ? ` class="language-${langClass}"` : '';
-                html += `<div class="gc-code-block"><div class="gc-code-header"><span>Code</span><span>${langLabel}</span></div><pre><code${codeClass}>${code}</code></pre></div>`;
+                const langClass = lang ? lang.toLowerCase().replace(/[^a-z0-9_-]/g, '') : 'plaintext';
+                const rawCode = match[2].replace(/\s+$/, '');
+                const safeCode = this.escapeHtml(rawCode);
+                const codeClass = ` class="language-${langClass}"`;
+                html += `<div class="gc-code-block"><div class="gc-code-header"><div class="gc-code-left"><span class="gc-code-label">Code</span><button class="gc-code-copy" title="Copy code"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button></div><span class="gc-code-lang">${langLabel}</span></div><pre><code${codeClass}>${safeCode}</code></pre></div>`;
                 hasMarkup = true;
 
                 lastIndex = codeBlockRegex.lastIndex;
@@ -2543,15 +2686,20 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
         }
 
         renderToolMarkup(content) {
+            // Normalize tool tags that may come as <tool:code>...</tool:code>
+            const normalizedContent = (content || '')
+                .replace(/<tool:(\w+)([^>]*)>/gi, '[tool:$1$2]')
+                .replace(/<\/tool:(\w+)>/gi, '[/tool:$1]');
+
             const regex = /\[tool:code([^\]]*)\]([\s\S]*?)\[\/tool:code\]|\[tool:(\w+)([^\]]*)\]/gi;
             let html = '';
             let hasTool = false;
             let lastIndex = 0;
             let match;
 
-            while ((match = regex.exec(content)) !== null) {
+            while ((match = regex.exec(normalizedContent)) !== null) {
                 if (match.index > lastIndex) {
-                    const chunk = content.slice(lastIndex, match.index);
+                    const chunk = normalizedContent.slice(lastIndex, match.index);
                     const renderedChunk = this.renderTextWithFormatting(chunk);
                     html += renderedChunk.html;
                     hasTool = hasTool || renderedChunk.hasMarkup;
@@ -2561,10 +2709,11 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
                     const attrs = this.parseToolAttributes(match[1]);
                     const lang = attrs.lang || attrs.language || '';
                     const langLabel = lang ? this.escapeHtml(lang) : 'Plain';
-                    const langClass = lang ? lang.toLowerCase().replace(/[^a-z0-9_-]/g, '') : '';
-                    const code = this.escapeHtml(match[2].replace(/\s+$/, ''));
-                    const codeClass = langClass ? ` class="language-${langClass}"` : '';
-                    html += `<div class="gc-tool gc-tool-code"><div class="gc-code-header"><span>Code</span><span>${langLabel}</span></div><pre><code${codeClass}>${code}</code></pre></div>`;
+                    const langClass = lang ? lang.toLowerCase().replace(/[^a-z0-9_-]/g, '') : 'plaintext';
+                    const rawCode = match[2].replace(/\s+$/, '');
+                    const safeCode = this.escapeHtml(rawCode);
+                    const codeClass = ` class="language-${langClass}"`;
+                    html += `<div class="gc-tool gc-tool-code"><div class="gc-code-header"><div class="gc-code-left"><span class="gc-code-label">Code</span><button class="gc-code-copy" title="Copy code"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button></div><span class="gc-code-lang">${langLabel}</span></div><pre><code${codeClass}>${safeCode}</code></pre></div>`;
                     hasTool = true;
                 } else {
                     const toolName = (match[3] || '').toLowerCase();
@@ -2582,7 +2731,7 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
             }
 
             if (lastIndex < content.length) {
-                const tailChunk = content.slice(lastIndex);
+                const tailChunk = normalizedContent.slice(lastIndex);
                 const renderedTail = this.renderTextWithFormatting(tailChunk);
                 html += renderedTail.html;
                 hasTool = hasTool || renderedTail.hasMarkup;
@@ -2597,12 +2746,12 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
                 return;
             }
             const rendered = this.renderToolMarkup(content);
+            contentDiv.innerHTML = rendered.html;
             if (rendered.hasTool) {
-                contentDiv.innerHTML = rendered.html;
                 this.initToolImages(contentDiv);
-                return;
             }
-            contentDiv.textContent = content;
+            this.initCodeCopy(contentDiv);
+            this.applyHighlighting(contentDiv);
         }
 
         updateMessageContent(messageIndex) {
@@ -2630,7 +2779,7 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
             }
 
             contentDiv.innerHTML = '';
-            if (msg.isLoading) {
+            if (msg.isLoading && msg.regenTargetIndex !== undefined && msg.currentVersion === msg.regenTargetIndex) {
                 const loadingDiv = document.createElement('div');
                 loadingDiv.className = 'gc-inline-loading';
                 loadingDiv.innerHTML = '<div class="dot"></div><div class="dot"></div><div class="dot"></div>';
@@ -2638,6 +2787,9 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
             } else {
                 this.applyAssistantContent(contentDiv, msg.content);
             }
+            this.initCodeCopy(contentDiv);
+            this.applyHighlighting(contentDiv);
+            this.applyHighlighting(this.shadow);
 
             if (msg.versions && msg.versions.length > 1) {
                 const tabs = messageElement.querySelectorAll('.gc-version-tab');
@@ -2648,6 +2800,12 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
                         tab.classList.remove('active');
                     }
                 });
+            }
+
+            const actions = messageElement.querySelector('.gc-message-actions');
+            if (actions) {
+                const hideActions = msg.isLoading && msg.regenTargetIndex !== undefined && msg.currentVersion === msg.regenTargetIndex;
+                actions.style.display = hideActions ? 'none' : '';
             }
         }
 
@@ -2761,6 +2919,8 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
                 this.scrollToBottom();
             }
             this.updateTypingIndicatorVisibility();
+            this.initCodeCopy(this.elements.msgContainer);
+            this.applyHighlighting(this.elements.msgContainer);
         }
 
         findPreviousUserMessageIndex(startIndex) {
@@ -2795,32 +2955,33 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
                 currentMessage.currentVersion = 0;
             }
 
-            // Add placeholder for new version and switch to it
-            currentMessage.versions.push('');
-            currentMessage.currentVersion = currentMessage.versions.length - 1;
+            const targetVersionIndex = currentMessage.versions.length;
+            const previousVersionIndex = currentMessage.currentVersion ?? 0;
+            currentMessage.regenPrevIndex = previousVersionIndex;
+            currentMessage.regenTargetIndex = targetVersionIndex;
+            currentMessage.versions[targetVersionIndex] = '';
+            currentMessage.currentVersion = targetVersionIndex;
             currentMessage.content = '';
             currentMessage.isLoading = true;
 
             if (requestChatId === this.currentChatId) {
-                // Add new tab to UI without full re-render
-                const messageElements = this.elements.msgContainer.querySelectorAll('.gc-message');
-                const messageElement = messageElements[messageIndex];
-                if (messageElement) {
-                    let tabsContainer = messageElement.querySelector('.gc-version-tabs');
+            // Add new tab to UI without full re-render
+            const messageElements = this.elements.msgContainer.querySelectorAll('.gc-message');
+            const messageElement = messageElements[messageIndex];
+            if (messageElement) {
+                let tabsContainer = messageElement.querySelector('.gc-version-tabs');
                     if (!tabsContainer) {
                         tabsContainer = document.createElement('div');
                         tabsContainer.className = 'gc-version-tabs';
                         messageElement.insertBefore(tabsContainer, messageElement.firstChild);
                     }
 
-                    // Rebuild tabs
+                    // Rebuild tabs, keep current version active unless pending active
                     tabsContainer.innerHTML = '';
                     currentMessage.versions.forEach((version, versionIndex) => {
                         const tab = document.createElement('button');
                         tab.className = 'gc-version-tab';
-                        if (versionIndex === currentMessage.currentVersion) {
-                            tab.classList.add('active');
-                        }
+                        if (versionIndex === currentMessage.currentVersion) tab.classList.add('active');
                         tab.textContent = versionIndex + 1;
                         tab.onclick = (e) => {
                             e.stopPropagation();
@@ -2850,22 +3011,33 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
                 }
 
                 // Update the version with actual content
-                currentMessage.versions[currentMessage.currentVersion] = newContent;
+                currentMessage.versions[targetVersionIndex] = newContent;
+                currentMessage.currentVersion = targetVersionIndex;
                 currentMessage.content = newContent;
                 currentMessage.isLoading = false;
 
                 // Save and update content
                 this.saveHistory();
+                delete currentMessage.regenPrevIndex;
+                delete currentMessage.regenTargetIndex;
                 if (requestChatId === this.currentChatId) {
-                    this.updateMessageContent(messageIndex);
+                    this.renderMessages(true);
                 }
             } catch (error) {
                 // Remove failed placeholder version
-                currentMessage.versions.pop();
-                currentMessage.currentVersion = currentMessage.versions.length - 1;
-                currentMessage.content = currentMessage.versions[currentMessage.currentVersion];
+                currentMessage.versions.splice(targetVersionIndex, 1);
+                const prevIndex = currentMessage.regenPrevIndex ?? 0;
+                currentMessage.currentVersion = prevIndex;
+                currentMessage.content = currentMessage.versions[prevIndex] || '';
                 currentMessage.isLoading = false;
+                delete currentMessage.regenPrevIndex;
+                delete currentMessage.regenTargetIndex;
                 console.error('NeuraVeil Regenerate Error:', error);
+                this.appendMessageToChat(
+                    requestChatId,
+                    'assistant',
+                    'Erreur • Impossible de régénérer pour le moment. Vérifie ta connexion et réessaie.'
+                );
                 if (requestChatId === this.currentChatId) {
                     this.renderMessages(true);
                 }
@@ -2965,6 +3137,8 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
                 contentDiv.textContent = content;
             }
             div.appendChild(contentDiv);
+            this.applyHighlighting(div);
+            this.initCodeCopy(div);
 
             // Add action buttons for assistant messages
             if (role === 'assistant' && !isGreeting) {
@@ -3017,6 +3191,10 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
             this.scrollToBottom();
             this.messages.push({ role, content });
             this.saveHistory();
+
+            if (role === 'assistant') {
+                this.applyHighlighting(this.shadow);
+            }
         }
 
         scrollToBottom() {
@@ -3070,7 +3248,11 @@ Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/Gre
                 const response = await this.fetchAIResponse(text, null, reasoningLevel);
                 this.appendMessageToChat(requestChatId, 'assistant', response);
             } catch (error) {
-                this.appendMessageToChat(requestChatId, 'assistant', '⚠️ Error: Could not reach the ghost in the machine.');
+                this.appendMessageToChat(
+                    requestChatId,
+                    'assistant',
+                    'Error • The connection failed. Please wait a few seconds and try again.'
+                );
                 console.error('NeuraVeil Error:', error);
             } finally {
                 this.setLoading(false, requestChatId);
