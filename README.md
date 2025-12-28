@@ -85,6 +85,15 @@ Everything works without page reloads.
 
 ---
 
+## Third-Party Libraries
+
+- **Highlight.js**  
+  Used for syntax highlighting of code blocks across all supported programming languages.  
+  Website: https://highlightjs.org/
+  License: BSD 3-Clause
+
+---
+
 ## Author
 
 Developed and maintained by **Dℝ∃wX** (DREwX-code).  
