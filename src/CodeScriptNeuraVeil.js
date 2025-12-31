@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NeuraVeil — AI Chat in Your Browser
 // @namespace    https://github.com/DREwX-code
-// @version      1.0.8
+// @version      1.0.9
 // @description  Lightweight floating AI chat panel that works on any webpage. Free and no signup required. Uses Pollinations.ai for text and image generation, supports multiple conversations, reasoning levels, response styles, image tools, and a privacy-focused Ghost Mode.
 // @author       Dℝ∃wX
 // @match        *://*/*
@@ -34,26 +34,60 @@ limitations under the License.
 */
 
 /*
-NeuraVeil
+ _   _  ______  _    _  _____           __      __ ______  _____  _
+| \ | ||  ____|| |  | ||  __ \     /\   \ \    / /|  ____||_   _|| |
+|  \| || |__   | |  | || |__) |   /  \   \ \  / / | |__     | |  | |
+| . ` ||  __|  | |  | ||  _  /   / /\ \   \ \/ /  |  __|    | |  | |
+| |\  || |____ | |__| || | \ \  / ____ \   \  /   | |____  _| |_ | |____
+|_| \_||______| \____/ |_|  \_\/_/    \_\   \/    |______||_____||______|
+
 --------------------------------
 
-AI Backend:
-This project uses public, open-source endpoints provided by Pollinations.ai.
-License: MIT.
-No proprietary models are hosted or redistributed.
+AI Backends:
+
+This project uses public, open-source endpoints provided by Pollinations.ai
+for text and image generation.
+No proprietary models are hosted or redistributed by this project.
 Website: https://pollinations.ai/
 Source code: https://github.com/pollinations/pollinations
+License: MIT.
+
+This project uses the public, community-driven API provided by
+AI Horde (Stable Horde) for image generation.
+Anonymous access is used (no user account, no API key required).
+No proprietary models are hosted or redistributed by this project.
+Website: https://aihorde.net/
+API: https://aihorde.net/api/
+Source code: https://github.com/Haidra-Org/AI-Horde
+License: AGPL-3.0
+
+---
+
+Speech-to-Text (Voice Input):
+
+This project uses the browser-native Web Speech API for voice-to-text input,
+via SpeechRecognition or webkitSpeechRecognition depending on browser support.
+Speech recognition is handled entirely by the user's browser.
+No audio data is stored, logged, or transmitted by this project.
+No external speech-to-text APIs, accounts, or API keys are used.
+
+---
 
 GreasyFork SVG Icon:
+
 Created by denilsonsa.
-License: Not explicitly declared (used with attribution).
 Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/GreasyFork.svg
+License: Not explicitly declared (used with attribution).
+
+---
 
 Third-Party Libraries:
+
 This project uses Highlight.js for syntax highlighting.
-License: BSD 3-Clause.
 Website: https://highlightjs.org/
 Source code: https://github.com/highlightjs/highlight.js
+License: BSD 3-Clause
+
 */
 
 
@@ -74,7 +108,13 @@ Source code: https://github.com/highlightjs/highlight.js
                 { id: 'geek', label: 'Geek', desc: 'Tech jargon and references' },
                 { id: 'persuasive', label: 'Persuasive', desc: 'Structured and convincing' }
             ];
+
+            this.IMAGE_MODELS = [
+                { id: 'pollinations', label: 'Pollinations' },
+                { id: 'ai-horde', label: 'AI Horde' }
+            ];
             this.INPUT_MAX_ROWS = 5;
+            this.SIDEBAR_WIDTH = 430;
             this.DEFAULT_GREETING = 'Hello! I am NeuraVeil. How can I help you today?';
             this.hljsReady = null;
             this.hljsCssLoaded = false;
@@ -104,26 +144,29 @@ Source code: https://github.com/highlightjs/highlight.js
                 { role: 'assistant', content: this.DEFAULT_GREETING }
             ];
 
+            this.recognition = null;
+            this.isRecording = false;
+
             this.init();
         }
 
         loadHighlightJS() {
-    if (this.hljsReady) return this.hljsReady;
+            if (this.hljsReady) return this.hljsReady;
 
-    this.hljsReady = new Promise((resolve) => {
-        const link = document.createElement('link');
-        link.rel = 'stylesheet';
-        link.href = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css';
-        this.shadow.appendChild(link);
+            this.hljsReady = new Promise((resolve) => {
+                const link = document.createElement('link');
+                link.rel = 'stylesheet';
+                link.href = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css';
+                this.shadow.appendChild(link);
 
-        const script = document.createElement('script');
-        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js';
-        script.onload = () => resolve();
-        this.shadow.appendChild(script);
-    });
+                const script = document.createElement('script');
+                script.src = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js';
+                script.onload = () => resolve();
+                this.shadow.appendChild(script);
+            });
 
-    return this.hljsReady;
-}
+            return this.hljsReady;
+        }
 
 
 
@@ -136,7 +179,9 @@ Source code: https://github.com/highlightjs/highlight.js
             this.loadSavedReasoning();
             this.loadSavedStyle();
             this.restoreActiveChat();
+            this.restoreActiveChat();
             this.updateGhostUI();
+            this.setupSpeechRecognition();
             this.buildInfoContent();
         }
 
@@ -177,28 +222,28 @@ Source code: https://github.com/highlightjs/highlight.js
             const style = document.createElement('style');
             style.textContent = `
                 :host {
-                    --gc-bg: rgba(23, 23, 28, 0.95);
-                    --gc-bg-secondary: rgba(30, 30, 36, 0.9);
-                    --gc-border: rgba(255, 255, 255, 0.08);
-                    --gc-primary: #8b5cf6;
-                    --gc-primary-hover: #7c3aed;
-                    --gc-text: #ffffff;
-                    --gc-text-muted: #a1a1aa;
-                    --gc-radius: 16px;
-                    --gc-radius-sm: 8px;
-                    --gc-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+                    --nv-bg: rgba(23, 23, 28, 0.95);
+                    --nv-bg-secondary: rgba(30, 30, 36, 0.9);
+                    --nv-border: rgba(255, 255, 255, 0.08);
+                    --nv-primary: #8b5cf6;
+                    --nv-primary-hover: #7c3aed;
+                    --nv-text: #ffffff;
+                    --nv-text-muted: #a1a1aa;
+                    --nv-radius: 16px;
+                    --nv-radius-sm: 8px;
+                    --nv-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
                 }
 
                 * { box-sizing: border-box; }
 
                 /* Trigger Button */
-                .gc-trigger {
+                .nv-trigger {
                     width: 56px;
                     height: 56px;
                     border-radius: 50%;
-                    background: var(--gc-bg);
-                    border: 1px solid var(--gc-border);
-                    box-shadow: var(--gc-shadow);
+                    background: var(--nv-bg);
+                    border: 1px solid var(--nv-border);
+                    box-shadow: var(--nv-shadow);
                     cursor: pointer;
                     display: flex;
                     align-items: center;
@@ -209,22 +254,22 @@ Source code: https://github.com/highlightjs/highlight.js
                     right: 0;
                     z-index: 10;
                 }
-                .gc-trigger:hover { transform: scale(1.05); }
-                .gc-trigger:active { transform: scale(0.95); }
-                .gc-trigger svg { width: 26px; height: 26px; fill: var(--gc-text); transition: all 0.3s; }
+                .nv-trigger:hover { transform: scale(1.05); }
+                .nv-trigger:active { transform: scale(0.95); }
+                .nv-trigger svg { width: 26px; height: 26px; fill: var(--nv-text); transition: all 0.3s; }
 
                 /* Panel */
-                .gc-panel {
+                .nv-panel {
                     position: absolute;
                     bottom: 72px;
                     right: 0;
                     width: 425px;
                     height: 500px;
                     max-height: 80vh;
-                    background: var(--gc-bg);
-                    border: 1px solid var(--gc-border);
-                    border-radius: var(--gc-radius);
-                    box-shadow: var(--gc-shadow);
+                    background: var(--nv-bg);
+                    border: 1px solid var(--nv-border);
+                    border-radius: var(--nv-radius);
+                    box-shadow: var(--nv-shadow);
                     display: flex;
                     flex-direction: column;
                     opacity: 0;
@@ -239,7 +284,7 @@ Source code: https://github.com/highlightjs/highlight.js
                     z-index: 20;
                 }
 
-                .gc-panel.open {
+                .nv-panel.open {
                     opacity: 1;
                     transform: translateY(0) scale(1);
                     pointer-events: auto;
@@ -247,7 +292,7 @@ Source code: https://github.com/highlightjs/highlight.js
                 }
 
                 /* Sidebar Mode */
-                .gc-panel.sidebar {
+                .nv-panel.sidebar {
                     position: fixed;
                     top: 0;
                     bottom: 0;
@@ -255,40 +300,39 @@ Source code: https://github.com/highlightjs/highlight.js
                     height: 100vh;
                     max-height: 100vh;
                     border-radius: 0;
-                    border-left: 1px solid var(--gc-border);
+                    border-left: 1px solid var(--nv-border);
                     border-top: none;
                     border-bottom: none;
                     transform: translateX(100%);
                     width: 430px;
                     z-index: 99999;
                 }
-                .gc-panel.sidebar.open {
+                .nv-panel.sidebar.open {
                     transform: translateX(0);
                 }
 
                 /* Header */
-                .gc-header {
+                .nv-header {
                     padding: 16px;
-                    background: var(--gc-bg-secondary);
-                    border-bottom: 1px solid var(--gc-border);
-                    display: flex;
+                    background: var(--nv-bg-secondary);
+                    border-bottom: 1px solid var(--nv-border);
                     align-items: center;
                     justify-content: space-between;
                 }
-                .gc-header-left { display: flex; align-items: center; gap: 8px; }
-                .gc-header-right { display: flex; align-items: center; gap: 4px; }
-                .gc-header-main { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-                .gc-header-extra {
+                .nv-header-left { display: flex; align-items: center; gap: 8px; }
+                .nv-header-right { display: flex; align-items: center; gap: 4px; margin-right: auto; }
+                .nv-header-main { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+                .nv-header-extra {
                     display: none;
                     padding: 10px 16px 12px;
-                    background: var(--gc-bg-secondary);
-                    border-bottom: 1px solid var(--gc-border);
+                    background: var(--nv-bg-secondary);
+                    border-bottom: 1px solid var(--nv-border);
                     gap: 10px;
                     align-items: center;
                     flex-wrap: wrap;
                 }
-                .gc-header-extra.open { display: flex; }
-                .gc-ghost-pill {
+                .nv-header-extra.open { display: flex; }
+                .nv-ghost-pill {
                     display: none;
                     flex: 0 0 100%;
                     padding: 4px 8px;
@@ -301,20 +345,20 @@ Source code: https://github.com/highlightjs/highlight.js
                     letter-spacing: 0.2px;
                 }
 
-                .gc-ghost-pill.visible {
+                .nv-ghost-pill.visible {
                     display: flex;
                     align-items: center;
                     gap: 6px;
                 }
 
-                .gc-ghost-pill::before {
+                .nv-ghost-pill::before {
                     content: 'G';
                     font-size: 11px;
                     font-weight: 700;
                     letter-spacing: 0.4px;
                 }
 
-                .gc-settings {
+                .nv-settings {
                     position: absolute;
                     inset: 58px 0 0 0;
                     background: #17171c;
@@ -325,131 +369,130 @@ Source code: https://github.com/highlightjs/highlight.js
                     transform: translateX(100%);
                     transition: transform 0.3s ease;
                 }
-                .gc-settings.visible { transform: translateX(0); }
-                .gc-settings-title {
+                .nv-settings.visible { transform: translateX(0); }
+                .nv-settings-title {
                     font-size: 12px;
-                    color: var(--gc-text-muted);
+                    color: var(--nv-text-muted);
                     margin-bottom: 10px;
                     letter-spacing: 0.2px;
                 }
-                .gc-settings-list {
+                .nv-settings-list {
                     flex: 1;
                     display: flex;
                     flex-direction: column;
                     gap: 8px;
                     overflow-y: auto;
                 }
-                .gc-settings-item {
+                .nv-settings-item {
                     text-align: left;
                     background: rgba(255, 255, 255, 0.04);
-                    border: 1px solid var(--gc-border);
+                    border: 1px solid var(--nv-border);
                     border-radius: 10px;
                     padding: 10px 12px;
-                    color: var(--gc-text);
+                    color: var(--nv-text);
                     cursor: pointer;
                     transition: all 0.2s;
                 }
-                .gc-settings-item:hover { background: rgba(255, 255, 255, 0.08); }
-                .gc-settings-item.active {
-                    border-color: var(--gc-primary);
+                .nv-settings-item:hover { background: rgba(255, 255, 255, 0.08); }
+                .nv-settings-item.active {
+                    border-color: var(--nv-primary);
                     background: rgba(139, 92, 246, 0.15);
                 }
-                .gc-settings-label {
+                .nv-settings-label {
                     font-size: 13px;
                     font-weight: 600;
                 }
-                .gc-settings-desc {
+                .nv-settings-desc {
                     font-size: 12px;
-                    color: var(--gc-text-muted);
+                    color: var(--nv-text-muted);
                     margin-top: 4px;
                     line-height: 1.35;
                 }
-                .gc-panel.ghost-mode {
+                .nv-panel.ghost-mode {
                     background: radial-gradient(circle at 20% 20%, rgba(45, 212, 191, 0.08), transparent 35%), radial-gradient(circle at 80% 0%, rgba(14, 165, 233, 0.08), transparent 35%), rgba(10, 12, 20, 0.95);
                     border-color: rgba(99, 102, 241, 0.35);
                 }
-                .gc-panel.ghost-mode .gc-header,
-                .gc-panel.ghost-mode .gc-header-extra,
-                .gc-panel.ghost-mode .gc-settings {
+                .nv-panel.ghost-mode .nv-header,
+                .nv-panel.ghost-mode .nv-header-extra,
+                .nv-panel.ghost-mode .nv-settings {
                     background: rgba(15, 23, 42, 0.95);
                     border-color: rgba(99, 102, 241, 0.25);
                 }
-                .gc-panel.ghost-mode .gc-message.assistant { background: rgba(255, 255, 255, 0.06); }
-                .gc-panel.ghost-mode .gc-message.user { background: linear-gradient(135deg, #14b8a6, #06b6d4); }
-                .gc-panel.ghost-mode .gc-input-area {
+                .nv-panel.ghost-mode .nv-message.assistant { background: rgba(255, 255, 255, 0.06); }
+                .nv-panel.ghost-mode .nv-message.user { background: linear-gradient(135deg, #14b8a6, #06b6d4); }
+                .nv-panel.ghost-mode .nv-input-area {
                     background: linear-gradient(135deg, rgba(14, 165, 233, 0.14), rgba(20, 184, 166, 0.14));
                     border-top-color: rgba(99, 102, 241, 0.25);
                 }
-                .gc-panel.ghost-mode .gc-input {
+                .nv-panel.ghost-mode .nv-input {
                     border-color: rgba(99, 102, 241, 0.4);
                     background: rgba(0, 0, 0, 0.25);
                 }
-                .gc-panel.ghost-mode .gc-status-dot {
-                    background: #22d3ee;
-                    box-shadow: 0 0 10px rgba(34, 211, 238, 0.8);
+                .nv-panel.ghost-mode .nv-status-logo {
+                    filter: drop-shadow(0 0 8px rgba(34, 211, 238, 0.8));
                 }
 
-                .gc-title {
+                .nv-title {
                     font-size: 16px;
                     font-weight: 600;
-                    color: var(--gc-text);
+                    color: var(--nv-text);
                     display: flex;
                     align-items: center;
                     gap: 8px;
                 }
-                .gc-title-toggle {
+                .nv-title-toggle {
                     background: none;
                     border: none;
-                    color: var(--gc-text-muted);
+                    color: var(--nv-text-muted);
                     cursor: pointer;
                     padding: 4px;
                     border-radius: 6px;
                     display: inline-flex;
                     transition: all 0.2s;
                 }
-                .gc-title-toggle:hover { background: rgba(255, 255, 255, 0.1); color: var(--gc-text); }
-                .gc-title-toggle svg { width: 16px; height: 16px; transition: transform 0.2s; }
-                .gc-title-toggle.open svg { transform: rotate(90deg); }
-                .gc-status-dot {
-                    width: 8px;
-                    height: 8px;
-                    border-radius: 50%;
-                    background: #22c55e;
-                    box-shadow: 0 0 8px rgba(34, 197, 94, 0.4);
+                .nv-title-toggle:hover { background: rgba(255, 255, 255, 0.1); color: var(--nv-text); }
+                .nv-title-toggle svg { width: 16px; height: 16px; transition: transform 0.2s; }
+                .nv-title-toggle.open svg { transform: rotate(90deg); }
+                .nv-status-logo {
+                    width: 35px;
+                    height: 35px;
+                    border-radius: 4px;
+                    object-fit: contain;
+                    margin-right: -2px;
+                    margin-left: -10px;
                 }
-                .gc-status-dot.ghost-active {
-                    background: #22d3ee;
-                    box-shadow: 0 0 10px rgba(34, 211, 238, 0.8);
+                .nv-status-logo.ghost-active {
+                    filter: drop-shadow(0 0 6px rgba(34, 211, 238, 0.8));
                 }
 
-                .gc-btn-icon {
+                .nv-btn-icon {
                     background: none;
                     border: none;
-                    color: var(--gc-text-muted);
+                    color: var(--nv-text-muted);
                     cursor: pointer;
                     padding: 6px;
                     border-radius: 6px;
                     transition: all 0.2s;
                     display: flex;
                 }
-                .gc-btn-icon:hover { background: rgba(255, 255, 255, 0.1); color: var(--gc-text); }
-                .gc-btn-icon svg { width: 18px; height: 18px; }
-                .gc-btn-icon.ghost-active {
+                .nv-btn-icon:hover { background: rgba(255, 255, 255, 0.1); color: var(--nv-text); }
+                .nv-btn-icon svg { width: 18px; height: 18px; }
+                .nv-btn-icon.ghost-active {
                     background: rgba(20, 184, 166, 0.18);
                     border: 1px solid rgba(20, 184, 166, 0.45);
                     color: #99f6e4;
                     box-shadow: 0 6px 16px rgba(20, 184, 166, 0.25);
                 }
-                .gc-header-extra .gc-btn-icon {
-                    border: 1px solid var(--gc-border);
+                .nv-header-extra .nv-btn-icon {
+                    border: 1px solid var(--nv-border);
                     background: rgba(255, 255, 255, 0.04);
                     border-radius: 10px;
                     padding: 8px;
                 }
-                .gc-header-extra .gc-btn-icon:hover {
+                .nv-header-extra .nv-btn-icon:hover {
                     background: rgba(255, 255, 255, 0.08);
                 }
-                .gc-info {
+                .nv-info {
                     position: absolute;
                     inset: 58px 0 0 0;
                     background: #0f111a;
@@ -461,89 +504,134 @@ Source code: https://github.com/highlightjs/highlight.js
                     transform: translateX(100%);
                     transition: transform 0.3s ease;
                 }
-                .gc-info.visible { transform: translateX(0); }
-                .gc-info-title {
+                .nv-info.visible { transform: translateX(0); }
+                .nv-info-title {
                     font-size: 14px;
                     font-weight: 700;
-                    color: var(--gc-text);
+                    color: var(--nv-text);
                 }
-                .gc-info-grid {
+                .nv-info-grid {
                     display: grid;
                     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
                     gap: 12px;
                 }
-                .gc-info-card {
-                    border: 1px solid var(--gc-border);
+                .nv-info-card {
+                    border: 1px solid var(--nv-border);
                     border-radius: 12px;
                     padding: 12px;
-                    color: var(--gc-text);
+                    color: var(--nv-text);
                 }
-                .gc-info-card.variant-a {
+                .nv-info-card.variant-a {
                     background: linear-gradient(135deg, rgba(139, 92, 246, 0.1), rgba(59, 130, 246, 0.08));
                 }
-                .gc-info-card.variant-b {
+                .nv-info-card.variant-b {
                     background: linear-gradient(135deg, rgba(16, 185, 129, 0.08), rgba(34, 211, 238, 0.08));
                 }
-                .gc-info-card.variant-c {
+                .nv-info-card.variant-c {
                     background: linear-gradient(135deg, rgba(244, 114, 182, 0.08), rgba(250, 204, 21, 0.08));
                 }
-                .gc-info-card h4 {
+                .nv-info-card h4 {
                     margin: 0 0 6px 0;
                     font-size: 13px;
                     font-weight: 700;
-                    color: var(--gc-text);
+                    color: var(--nv-text);
                 }
-                .gc-info-card p {
+                .nv-info-card p {
                     margin: 0;
                     font-size: 12px;
-                    color: var(--gc-text-muted);
+                    color: var(--nv-text-muted);
                     line-height: 1.45;
                 }
-                .gc-info-links {
+                .nv-info-links {
                     display: flex;
                     flex-wrap: wrap;
                     gap: 8px;
                     margin-top: 6px;
                 }
-                .gc-info-link {
+                .nv-info-link {
                     display: inline-flex;
                     align-items: center;
                     gap: 6px;
                     padding: 6px 10px;
                     border-radius: 999px;
-                    border: 1px solid var(--gc-border);
+                    border: 1px solid var(--nv-border);
                     background: rgba(255, 255, 255, 0.05);
-                    color: var(--gc-text);
+                    color: var(--nv-text);
                     text-decoration: none;
                     font-size: 12px;
                     transition: all 0.2s;
                 }
-                .gc-info-link svg {
+                .nv-info-link svg {
                     width: 14px;
                     height: 14px;
                 }
-                .gc-info-link:hover {
+                .nv-info-link:hover {
                     background: rgba(255, 255, 255, 0.1);
                 }
 
+                /* Controls Row */
+                .nv-controls-row {
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    margin-top: 4px;
+                }
+
                 /* Model Selector */
-                .gc-model-select {
-                    background: rgba(255, 255, 255, 0.05);
-                    border: 1px solid var(--gc-border);
-                    border-radius: 6px;
-                    color: var(--gc-text);
-                    font-size: 12px;
-                    padding: 4px 8px;
+                .nv-model-select {
+                    background: transparent;
+                    border: none;
+                    color: var(--nv-text-muted);
+                    font-size: 11px;
+                    padding: 2px 4px;
                     cursor: pointer;
-                    margin-right: 8px;
                     transition: all 0.2s;
                     outline: none;
+                    width: fit-content;
+                    opacity: 0.8;
                 }
-                .gc-model-select:hover { background: rgba(255, 255, 255, 0.08); }
-                .gc-model-select option { background: var(--gc-bg-secondary); color: var(--gc-text); }
+                .nv-model-select:hover { opacity: 1; color: var(--nv-text); }
+                .nv-model-select option { background: var(--nv-bg-secondary); color: var(--nv-text); font-size: 12px; }
+                .nv-model-select.nv-ghost-icon {
+                    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3l7 4v6c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V7z'/%3E%3C/svg%3E");
+                    background-repeat: no-repeat;
+                    background-position: 4px center;
+                    padding-left: 22px;
+                    appearance: none;
+                    -webkit-appearance: none;
+                    -moz-appearance: none;
+                }
+                .nv-model-select.nv-ghost-icon::-ms-expand { display: none; }
+
+                /* Small Image Button */
+                .nv-img-btn-small {
+                    background: transparent;
+                    border: none;
+                    color: var(--nv-text-muted);
+                    cursor: pointer;
+                    padding: 2px;
+                    display: flex;
+                    justify-content: center;
+                    transition: all 0.2s;
+                    opacity: 0.7;
+                    border-radius: 4px;
+                }
+                .nv-img-btn-small:hover { opacity: 1; color: var(--nv-text); background: rgba(255,255,255,0.05); }
+                .nv-img-btn-small.active {
+                    color: var(--nv-primary);
+                    opacity: 1;
+                    background: rgba(139, 92, 246, 0.15);
+                }
+                .nv-img-btn-small svg { width: 16px; height: 16px; }
+
+                .nv-input-wrapper {
+                    flex: 1;
+                    display: flex;
+                    flex-direction: column;
+                }
 
                 /* History Panel (Overlay) */
-                .gc-history {
+                .nv-history {
                     position: absolute;
                     inset: 58px 0 0 0;
                     background: #17171c;
@@ -553,67 +641,67 @@ Source code: https://github.com/highlightjs/highlight.js
                     transform: translateX(100%);
                     transition: transform 0.3s ease;
                 }
-                .gc-history.visible { transform: translateX(0); }
+                .nv-history.visible { transform: translateX(0); }
 
-                .gc-history-header {
+                .nv-history-header {
                     padding: 12px 16px;
                     font-size: 13px;
-                    color: var(--gc-text-muted);
+                    color: var(--nv-text-muted);
                     text-transform: uppercase;
                     letter-spacing: 0.5px;
-                    border-bottom: 1px solid var(--gc-border);
+                    border-bottom: 1px solid var(--nv-border);
                     display: flex;
                     justify-content: space-between;
                     align-items: center;
                 }
-                .gc-clear-all {
+                .nv-clear-all {
                     background: none;
                     border: none;
-                    color: var(--gc-text-muted);
+                    color: var(--nv-text-muted);
                     cursor: pointer;
                     display: flex;
                     padding: 4px;
                     border-radius: 4px;
                     transition: all 0.2s;
                 }
-                .gc-clear-all:hover { color: #ef4444; background: rgba(239, 68, 68, 0.1); }
+                .nv-clear-all:hover { color: #ef4444; background: rgba(239, 68, 68, 0.1); }
 
-                .gc-history-list {
+                .nv-history-list {
                     flex: 1;
                     overflow-y: auto;
                     padding: 8px;
                 }
 
-                .gc-history-item {
+                .nv-history-item {
                     padding: 12px;
                     border-radius: 8px;
                     cursor: pointer;
                     transition: background 0.2s;
-                    color: var(--gc-text-muted);
+                    color: var(--nv-text-muted);
                     display: flex;
                     flex-direction: column;
                     gap: 4px;
                     margin-bottom: 4px;
                     position: relative;
                 }
-                .gc-history-item:hover { background: rgba(255,255,255,0.05); color: var(--gc-text); }
-                .gc-history-item.active { background: rgba(139, 92, 246, 0.1); color: var(--gc-primary); }
+                .nv-history-item:hover { background: rgba(255,255,255,0.05); color: var(--nv-text); }
+                .nv-history-item.active { background: rgba(139, 92, 246, 0.1); color: var(--nv-primary); }
 
-                .gc-history-actions {
+                .nv-history-actions {
                     display: flex;
                     align-items: center;
                     gap: 8px;
                 }
-                .gc-history-search {
+                .nv-history-search {
                     display: flex;
                     align-items: center;
                     gap: 6px;
                     position: relative;
                 }
-                .gc-search-btn {
+                .nv-search-btn {
                     background: none;
                     border: none;
-                    color: var(--gc-text-muted);
+                    color: var(--nv-text-muted);
                     width: 28px;
                     height: 28px;
                     border-radius: 6px;
@@ -623,33 +711,33 @@ Source code: https://github.com/highlightjs/highlight.js
                     cursor: pointer;
                     transition: all 0.2s;
                 }
-                .gc-search-btn:hover { color: var(--gc-primary); background: rgba(139, 92, 246, 0.12); }
-                .gc-search-btn svg { width: 16px; height: 16px; }
-                .gc-search-input {
+                .nv-search-btn:hover { color: var(--nv-primary); background: rgba(139, 92, 246, 0.12); }
+                .nv-search-btn svg { width: 16px; height: 16px; }
+                .nv-search-input {
                     width: 0;
                     opacity: 0;
                     padding: 6px 0;
-                    border: 1px solid var(--gc-border);
+                    border: 1px solid var(--nv-border);
                     background: rgba(255, 255, 255, 0.04);
-                    color: var(--gc-text);
+                    color: var(--nv-text);
                     border-radius: 8px;
                     font-size: 13px;
                     transition: all 0.2s ease;
                     pointer-events: none;
                 }
-                .gc-history-search.active .gc-search-input {
+                .nv-history-search.active .nv-search-input {
                     width: 180px;
                     opacity: 1;
                     padding: 6px 8px;
                     pointer-events: auto;
                 }
-                .gc-search-input::placeholder { color: var(--gc-text-muted); }
+                .nv-search-input::placeholder { color: var(--nv-text-muted); }
 
-                .gc-h-title { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 48px; }
-                .gc-h-title.gc-h-editing {
+                .nv-h-title { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 48px; }
+                .nv-h-title.nv-h-editing {
                     width: calc(100% - 64px);
                     padding-right: 12px;
-                    outline: 1.5px solid var(--gc-primary);
+                    outline: 1.5px solid var(--nv-primary);
                     outline-offset: 2px;
                     border-radius: 8px;
                     background: rgba(255, 255, 255, 0.04);
@@ -659,10 +747,10 @@ Source code: https://github.com/highlightjs/highlight.js
                     text-overflow: unset;
                     word-break: break-word;
                 }
-                .gc-h-date { font-size: 11px; opacity: 0.6; }
+                .nv-h-date { font-size: 11px; opacity: 0.6; }
 
-                .gc-h-rename,
-                .gc-h-delete {
+                .nv-h-rename,
+                .nv-h-delete {
                     position: absolute;
                     top: 50%;
                     transform: translateY(-50%);
@@ -675,38 +763,38 @@ Source code: https://github.com/highlightjs/highlight.js
                     cursor: pointer;
                     opacity: 0;
                     transition: all 0.2s;
-                    color: var(--gc-text-muted);
+                    color: var(--nv-text-muted);
                 }
-                .gc-h-rename { right: 36px; }
-                .gc-h-delete { right: 8px; }
-                .gc-history-item:hover .gc-h-rename,
-                .gc-history-item:hover .gc-h-delete { opacity: 1; }
-                .gc-h-rename:hover { background: rgba(59, 130, 246, 0.15); color: #60a5fa; }
-                .gc-h-delete:hover { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
-                .gc-h-rename svg,
-                .gc-h-delete svg { width: 14px; height: 14px; }
+                .nv-h-rename { right: 36px; }
+                .nv-h-delete { right: 8px; }
+                .nv-history-item:hover .nv-h-rename,
+                .nv-history-item:hover .nv-h-delete { opacity: 1; }
+                .nv-h-rename:hover { background: rgba(59, 130, 246, 0.15); color: #60a5fa; }
+                .nv-h-delete:hover { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+                .nv-h-rename svg,
+                .nv-h-delete svg { width: 14px; height: 14px; }
 
-                .gc-history-item.search-focus {
-                    outline: 1px solid var(--gc-primary);
+                .nv-history-item.search-focus {
+                    outline: 1px solid var(--nv-primary);
                     outline-offset: -2px;
                     background: rgba(139, 92, 246, 0.08);
                 }
-                .gc-h-match {
+                .nv-h-match {
                     background: rgba(139, 92, 246, 0.25);
-                    color: var(--gc-text);
+                    color: var(--nv-text);
                     border-radius: 4px;
                     padding: 0 2px;
                 }
 
-                .gc-history-empty {
+                .nv-history-empty {
                     padding: 16px;
                     text-align: center;
-                    color: var(--gc-text-muted);
+                    color: var(--nv-text-muted);
                     font-size: 13px;
                 }
 
                 /* Messages */
-                .gc-messages {
+                .nv-messages {
                     flex: 1;
                     overflow-y: auto;
                     padding: 16px;
@@ -715,10 +803,10 @@ Source code: https://github.com/highlightjs/highlight.js
                     gap: 12px;
                     scroll-behavior: smooth;
                 }
-                .gc-messages::-webkit-scrollbar { width: 6px; }
-                .gc-messages::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); border-radius: 10px; }
+                .nv-messages::-webkit-scrollbar { width: 6px; }
+                .nv-messages::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); border-radius: 10px; }
 
-                .gc-message {
+                .nv-message {
                     max-width: 85%;
                     padding: 12px 16px;
                     border-radius: 14px;
@@ -732,75 +820,75 @@ Source code: https://github.com/highlightjs/highlight.js
                     from { opacity: 0; transform: translateY(10px); }
                     to { opacity: 1; transform: translateY(0); }
                 }
-                .gc-message.user { align-self: flex-end; background: var(--gc-primary); color: white; border-bottom-right-radius: 2px; }
-                .gc-message.assistant { align-self: flex-start; background: rgba(255, 255, 255, 0.08); color: var(--gc-text); border-bottom-left-radius: 2px; position: relative; }
+                .nv-message.user { align-self: flex-end; background: var(--nv-primary); color: white; border-bottom-right-radius: 2px; }
+                .nv-message.assistant { align-self: flex-start; background: rgba(255, 255, 255, 0.08); color: var(--nv-text); border-bottom-left-radius: 2px; position: relative; }
 
                 /* Tool Rendering */
-                .gc-tool {
+                .nv-tool {
                     margin-top: 10px;
                 }
-                .gc-tool:first-child {
+                .nv-tool:first-child {
                     margin-top: 0;
                 }
-                .gc-tool-label {
+                .nv-tool-label {
                     font-size: 10px;
                     text-transform: uppercase;
                     letter-spacing: 0.08em;
-                    color: var(--gc-text-muted);
+                    color: var(--nv-text-muted);
                     margin-bottom: 6px;
                 }
-                .gc-tool-caption {
+                .nv-tool-caption {
                     font-size: 12px;
-                    color: var(--gc-text-muted);
+                    color: var(--nv-text-muted);
                     margin-top: 6px;
                 }
-                .gc-tool-image img {
+                .nv-tool-image img {
                     width: 100%;
                     display: block;
                     border-radius: 10px;
-                    border: 1px solid var(--gc-border);
+                    border: 1px solid var(--nv-border);
                 }
-                .gc-tool-link a {
+                .nv-tool-link a {
                     display: inline-flex;
                     align-items: center;
                     gap: 6px;
                     padding: 6px 10px;
                     border-radius: 999px;
-                    border: 1px solid var(--gc-border);
+                    border: 1px solid var(--nv-border);
                     background: rgba(255, 255, 255, 0.05);
-                    color: var(--gc-text);
+                    color: var(--nv-text);
                     text-decoration: none;
                     font-size: 12px;
                 }
-                .gc-tool-link a:hover { background: rgba(255, 255, 255, 0.1); }
-                .gc-inline-link {
-                    color: var(--gc-text);
+                .nv-tool-link a:hover { background: rgba(255, 255, 255, 0.1); }
+                .nv-inline-link {
+                    color: var(--nv-text);
                     text-decoration: underline;
                     text-underline-offset: 3px;
                 }
-                .gc-inline-link:hover { color: var(--gc-primary); }
-                .gc-tool-code {
+                .nv-inline-link:hover { color: var(--nv-primary); }
+                .nv-tool-code {
                     background: rgb(12, 17, 23);
                     border-radius: 12px;
-                    border: 1px solid var(--gc-border);
+                    border: 1px solid var(--nv-border);
                     padding: 10px;
                 }
-                .gc-code-header {
+                .nv-code-header {
                     display: flex;
                     justify-content: space-between;
                     font-size: 11px;
-                    color: var(--gc-text-muted);
+                    color: var(--nv-text-muted);
                     margin-bottom: 8px;
                     align-items: center;
                     gap: 8px;
                 }
-                .gc-code-left {
+                .nv-code-left {
                     display: inline-flex;
                     align-items: center;
                     gap: 6px;
                 }
-                .gc-code-label { text-transform: uppercase; letter-spacing: 0.04em; }
-                .gc-code-copy {
+                .nv-code-label { text-transform: uppercase; letter-spacing: 0.04em; }
+                .nv-code-copy {
                     background: transparent;
                     border: none;
                     border-radius: 4px;
@@ -809,41 +897,41 @@ Source code: https://github.com/highlightjs/highlight.js
                     display: inline-flex;
                     align-items: center;
                     justify-content: center;
-                    color: var(--gc-text-muted);
+                    color: var(--nv-text-muted);
                     cursor: pointer;
                     transition: all 0.2s;
                 }
-                .gc-code-copy:hover { color: var(--gc-primary); background: rgba(139, 92, 246, 0.08); }
-                .gc-code-copy svg { width: 14px; height: 14px; }
-                .gc-code-lang { font-variant: small-caps; }
-                .gc-code-keyword { color: #c084fc; }
-                .gc-code-string { color: #86efac; }
-                .gc-code-number { color: #f472b6; }
-                .gc-code-comment { color: #9ca3af; font-style: italic; }
-                .gc-code-plain { color: var(--gc-text); }
-                .hljs { display: block; overflow-x: auto; padding: 0; background: transparent; color: var(--gc-text); }
+                .nv-code-copy:hover { color: var(--nv-primary); background: rgba(139, 92, 246, 0.08); }
+                .nv-code-copy svg { width: 14px; height: 14px; }
+                .nv-code-lang { font-variant: small-caps; }
+                .nv-code-keyword { color: #c084fc; }
+                .nv-code-string { color: #86efac; }
+                .nv-code-number { color: #f472b6; }
+                .nv-code-comment { color: #9ca3af; font-style: italic; }
+                .nv-code-plain { color: var(--nv-text); }
+                .hljs { display: block; overflow-x: auto; padding: 0; background: transparent; color: var(--nv-text); }
                 .hljs-keyword, .hljs-meta-keyword { color: #c084fc; }
                 .hljs-string, .hljs-attr, .hljs-attribute { color: #86efac; }
                 .hljs-number, .hljs-literal { color: #f472b6; }
                 .hljs-comment { color: #9ca3af; font-style: italic; }
-                .gc-tool-code pre {
+                .nv-tool-code pre {
                     margin: 0;
                     padding: 0;
                     overflow-x: auto;
                     font-size: 12px;
                     line-height: 1.5;
                     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-                    color: var(--gc-text);
+                    color: var(--nv-text);
                 }
-                .gc-code-block {
+                .nv-code-block {
                     background: rgb(12, 17, 23);
                     border-radius: 12px;
-                    border: 1px solid var(--gc-border);
+                    border: 1px solid var(--nv-border);
                     padding: 10px;
                     margin-top: 10px;
                 }
-                .gc-code-block:first-child { margin-top: 0; }
-                .gc-code-block pre {
+                .nv-code-block:first-child { margin-top: 0; }
+                .nv-code-block pre {
                     margin: 0;
                     padding: 0;
                     overflow-x: auto;
@@ -851,17 +939,17 @@ Source code: https://github.com/highlightjs/highlight.js
                     line-height: 1.5;
                     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
                 }
-                .gc-inline-code {
+                .nv-inline-code {
                     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
                     font-size: 12px;
                     background: rgba(0, 0, 0, 0.35);
-                    border: 1px solid var(--gc-border);
+                    border: 1px solid var(--nv-border);
                     border-radius: 6px;
                     padding: 1px 6px;
                 }
 
                 /* Version Tabs */
-                .gc-version-tabs {
+                .nv-version-tabs {
                     display: flex;
                     gap: 4px;
                     margin-bottom: 8px;
@@ -872,18 +960,18 @@ Source code: https://github.com/highlightjs/highlight.js
                     scrollbar-width: thin;
                     scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
                 }
-                .gc-version-tabs::-webkit-scrollbar { height: 4px; }
-                .gc-version-tabs::-webkit-scrollbar-track { background: transparent; }
-                .gc-version-tabs::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); border-radius: 2px; }
+                .nv-version-tabs::-webkit-scrollbar { height: 4px; }
+                .nv-version-tabs::-webkit-scrollbar-track { background: transparent; }
+                .nv-version-tabs::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); border-radius: 2px; }
 
-                .gc-version-tab {
+                .nv-version-tab {
                     min-width: 24px;
                     height: 24px;
                     padding: 0 8px;
                     border-radius: 4px;
                     background: rgba(255, 255, 255, 0.05);
-                    border: 1px solid var(--gc-border);
-                    color: var(--gc-text-muted);
+                    border: 1px solid var(--nv-border);
+                    color: var(--nv-text-muted);
                     cursor: pointer;
                     display: flex;
                     align-items: center;
@@ -893,15 +981,15 @@ Source code: https://github.com/highlightjs/highlight.js
                     flex-shrink: 0;
                     white-space: nowrap;
                 }
-                .gc-version-tab:hover { background: rgba(255, 255, 255, 0.1); color: var(--gc-text); }
-                .gc-version-tab.active {
-                    background: var(--gc-primary);
+                .nv-version-tab:hover { background: rgba(255, 255, 255, 0.1); color: var(--nv-text); }
+                .nv-version-tab.active {
+                    background: var(--nv-primary);
                     color: white;
-                    border-color: var(--gc-primary);
+                    border-color: var(--nv-primary);
                 }
 
                 /* Message Actions */
-                .gc-message-actions {
+                .nv-message-actions {
                     display: flex;
                     gap: 6px;
                     margin-top: 8px;
@@ -909,12 +997,12 @@ Source code: https://github.com/highlightjs/highlight.js
                     border-top: 1px solid rgba(255, 255, 255, 0.05);
                 }
 
-                .gc-action-btn {
+                .nv-action-btn {
                     padding: 6px 12px;
                     border-radius: 6px;
                     background: rgba(255, 255, 255, 0.05);
-                    border: 1px solid var(--gc-border);
-                    color: var(--gc-text-muted);
+                    border: 1px solid var(--nv-border);
+                    color: var(--nv-text-muted);
                     cursor: pointer;
                     display: flex;
                     align-items: center;
@@ -922,42 +1010,42 @@ Source code: https://github.com/highlightjs/highlight.js
                     transition: all 0.2s;
                     font-size: 12px;
                 }
-                .gc-action-btn:hover { background: rgba(255, 255, 255, 0.1); color: var(--gc-text); }
-                .gc-action-btn svg { width: 14px; height: 14px; }
+                .nv-action-btn:hover { background: rgba(255, 255, 255, 0.1); color: var(--nv-text); }
+                .nv-action-btn svg { width: 14px; height: 14px; }
 
                 /* Inline Loading */
-                .gc-inline-loading {
+                .nv-inline-loading {
                     display: flex;
                     gap: 4px;
                     padding: 12px 0;
                     opacity: 0.6;
                 }
-                .gc-inline-loading .dot {
+                .nv-inline-loading .dot {
                     width: 6px;
                     height: 6px;
-                    background: var(--gc-text-muted);
+                    background: var(--nv-text-muted);
                     border-radius: 50%;
                     animation: bounce 1.4s infinite ease-in-out;
                 }
-                .gc-inline-loading .dot:nth-child(1) { animation-delay: -0.32s; }
-                .gc-inline-loading .dot:nth-child(2) { animation-delay: -0.16s; }
+                .nv-inline-loading .dot:nth-child(1) { animation-delay: -0.32s; }
+                .nv-inline-loading .dot:nth-child(2) { animation-delay: -0.16s; }
 
                 /* Input Area */
-                .gc-input-area {
+                .nv-input-area {
                     padding: 16px;
                     flex-wrap: wrap;
-                    border-top: 1px solid var(--gc-border);
+                    border-top: 1px solid var(--nv-border);
                     display: flex;
                     gap: 10px;
-                    background: var(--gc-bg-secondary);
+                    background: var(--nv-bg-secondary);
                 }
-                .gc-input {
+                .nv-input {
                     flex: 1;
                     background: rgba(0, 0, 0, 0.2);
-                    border: 1px solid var(--gc-border);
+                    border: 1px solid var(--nv-border);
                     border-radius: 24px;
                     padding: 10px 16px;
-                    color: var(--gc-text);
+                    color: var(--nv-text);
                     font-size: 14px;
                     outline: none;
                     transition: border-color 0.2s;
@@ -966,12 +1054,12 @@ Source code: https://github.com/highlightjs/highlight.js
                     overflow-y: hidden;
                     line-height: 1.5;
                 }
-                .gc-input:focus { border-color: var(--gc-primary); }
-                .gc-send-btn {
+                .nv-input:focus { border-color: var(--nv-primary); }
+                .nv-send-btn {
                     width: 40px;
                     height: 40px;
                     border-radius: 50%;
-                    background: var(--gc-primary);
+                    background: var(--nv-primary);
                     border: none;
                     color: white;
                     cursor: pointer;
@@ -980,8 +1068,8 @@ Source code: https://github.com/highlightjs/highlight.js
                     justify-content: center;
                     transition: all 0.2s;
                 }
-                .gc-send-btn:hover { background: var(--gc-primary-hover); }
-                .gc-send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+                .nv-send-btn:hover { background: var(--nv-primary-hover); }
+                .nv-send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
                 /* Typing Indicator */
                 .typing-indicator {
@@ -998,7 +1086,7 @@ Source code: https://github.com/highlightjs/highlight.js
                 .dot {
                     width: 6px;
                     height: 6px;
-                    background: var(--gc-text-muted);
+                    background: var(--nv-text-muted);
                     border-radius: 50%;
                     animation: bounce 1.4s infinite ease-in-out;
                 }
@@ -1007,7 +1095,7 @@ Source code: https://github.com/highlightjs/highlight.js
                 @keyframes bounce { 0%, 80%, 100% { transform: scale(0); } 40% { transform: scale(1); } }
 
                 /* Modal */
-                .gc-modal-overlay {
+                .nv-modal-overlay {
                     position: absolute;
                     inset: 0;
                     background: rgba(0, 0, 0, 0.6);
@@ -1021,36 +1109,36 @@ Source code: https://github.com/highlightjs/highlight.js
                     transition: opacity 0.2s ease;
                     z-index: 100;
                 }
-                .gc-modal-overlay.visible { opacity: 1; pointer-events: auto; }
+                .nv-modal-overlay.visible { opacity: 1; pointer-events: auto; }
 
-                .gc-modal {
-                    background: var(--gc-bg-secondary);
+                .nv-modal {
+                    background: var(--nv-bg-secondary);
                     padding: 24px;
                     border-radius: 16px;
                     width: 85%;
                     max-width: 300px;
                     text-align: center;
-                    border: 1px solid var(--gc-border);
+                    border: 1px solid var(--nv-border);
                     box-shadow: 0 10px 40px rgba(0,0,0,0.5);
                     transform: scale(0.95);
                     transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
                 }
-                .gc-modal-overlay.visible .gc-modal { transform: scale(1); }
+                .nv-modal-overlay.visible .nv-modal { transform: scale(1); }
 
-                .gc-modal-text {
-                    color: var(--gc-text);
+                .nv-modal-text {
+                    color: var(--nv-text);
                     font-size: 15px;
                     margin-bottom: 20px;
                     line-height: 1.5;
                 }
 
-                .gc-modal-actions {
+                .nv-modal-actions {
                     display: flex;
                     gap: 10px;
                     justify-content: center;
                 }
 
-                .gc-btn {
+                .nv-btn {
                     padding: 8px 16px;
                     border-radius: 8px;
                     font-size: 13px;
@@ -1059,25 +1147,25 @@ Source code: https://github.com/highlightjs/highlight.js
                     border: none;
                     transition: all 0.2s;
                 }
-                .gc-btn-secondary {
+                .nv-btn-secondary {
                     background: rgba(255,255,255,0.1);
-                    color: var(--gc-text);
+                    color: var(--nv-text);
                 }
-                .gc-btn-secondary:hover { background: rgba(255,255,255,0.15); }
+                .nv-btn-secondary:hover { background: rgba(255,255,255,0.15); }
 
-                .gc-btn-danger {
+                .nv-btn-danger {
                     background: #ef4444;
                     color: white;
                 }
-                .gc-btn-danger:hover { background: #dc2626; }
+                .nv-btn-danger:hover { background: #dc2626; }
                 /* Image Button */
-                .gc-img-btn {
+                .nv-img-btn {
                     width: 40px;
                     height: 40px;
                     border-radius: 50%;
                     background: rgba(255,255,255,0.1);
                     border: none;
-                    color: var(--gc-text-muted);
+                    color: var(--nv-text-muted);
                     cursor: pointer;
                     display: flex;
                     align-items: center;
@@ -1085,9 +1173,9 @@ Source code: https://github.com/highlightjs/highlight.js
                     transition: all 0.2s;
                     margin-right: 8px;
                 }
-                .gc-img-btn:hover { background: rgba(255,255,255,0.15); color: var(--gc-text); }
-                .gc-img-btn.active {
-                    background: var(--gc-primary);
+                .nv-img-btn:hover { background: rgba(255,255,255,0.15); color: var(--nv-text); }
+                .nv-img-btn.active {
+                    background: var(--nv-primary);
                     color: white;
                 }
             `;
@@ -1097,7 +1185,7 @@ Source code: https://github.com/highlightjs/highlight.js
 
         createUI() {
             const trigger = document.createElement('div');
-            trigger.className = 'gc-trigger';
+            trigger.className = 'nv-trigger';
             trigger.innerHTML = `
                 <svg viewBox="0 0 24 24">
                   <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/>
@@ -1107,54 +1195,46 @@ Source code: https://github.com/highlightjs/highlight.js
 
             // Panel
             const panel = document.createElement('div');
-            panel.className = 'gc-panel';
+            panel.className = 'nv-panel';
             panel.innerHTML = `
-                <div class="gc-header">
-                    <div class="gc-header-main">
-                        <div class="gc-header-left">
-                            <div class="gc-title">
-                                <div class="gc-status-dot"></div>
+                <div class="nv-header">
+                    <div class="nv-header-main">
+                        <div class="nv-header-left">
+                            <div class="nv-title">
+                                <img src="https://raw.githubusercontent.com/DREwX-code/NeuraVeil/refs/heads/main/assets/icon/Icon_NeuraVeil_Script.png" class="nv-status-logo" alt="NeuraVeil logo">
                                 <span>NeuraVeil AI</span>
-                                <button class="gc-title-toggle" id="gc-btn-toggle-extra" title="More">
+                                <button class="nv-title-toggle" id="nv-btn-toggle-extra" title="More">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <polyline points="9 18 15 12 9 6"></polyline>
                                     </svg>
                                 </button>
                             </div>
                         </div>
-                        <div class="gc-header-right">
-                         <select class="gc-model-select" id="gc-model-select" title="Reasoning Effort">
-                            <option value="auto">Auto</option>
-                            <option value="minimal">Minimal</option>
-                            <option value="low" selected>Low</option>
-                            <option value="medium">Medium</option>
-                            <option value="high">High</option>
-                            <option value="ultra">Ultra</option>
-                         </select>
-                         <button class="gc-btn-icon" id="gc-btn-new" title="New Chat">
+                        <div class="nv-header-right">
+                         <button class="nv-btn-icon" id="nv-btn-new" title="New Chat">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
                         </button>
-                        <button class="gc-btn-icon" id="gc-btn-history" title="History">
+                        <button class="nv-btn-icon" id="nv-btn-history" title="History">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                         </button>
-                        <button class="gc-btn-icon" id="gc-btn-sidebar" title="Toggle Sidebar">
+                        <button class="nv-btn-icon" id="nv-btn-sidebar" title="Toggle Sidebar">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
                         </button>
-                        <button class="gc-btn-icon" id="gc-btn-close" title="Close">
+                        </div>
+                        <button class="nv-btn-icon" id="nv-btn-close" title="Close" style="margin-left: 8px;">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                         </button>
-                        </div>
                     </div>
                 </div>
-                <div class="gc-header-extra" id="gc-header-extra">
-                    <button class="gc-btn-icon" id="gc-btn-settings" title="Settings">
+                <div class="nv-header-extra" id="nv-header-extra">
+                    <button class="nv-btn-icon" id="nv-btn-settings" title="Settings">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <circle cx="12" cy="12" r="3"></circle>
                             <path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 0 0-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 0 0-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 0 0-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 0 0-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 0 0 1.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
                         </svg>
                     </button>
 
-                    <button class="gc-btn-icon" id="gc-btn-ghost" title="Ghost Mode">
+                    <button class="nv-btn-icon" id="nv-btn-ghost" title="Ghost Mode">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M12 2a8 8 0 0 0-8 8v12l3-2 2.5 2 2.5-2 2.5 2 2.5-2 3 2V10a8 8 0 0 0-8-8z"></path>
                             <circle cx="9" cy="11" r="1" fill="currentColor"></circle>
@@ -1162,7 +1242,7 @@ Source code: https://github.com/highlightjs/highlight.js
                         </svg>
                     </button>
 
-                <button class="gc-btn-icon" id="gc-btn-info" title="Info">
+                <button class="nv-btn-icon" id="nv-btn-info" title="Info">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <circle cx="12" cy="12" r="10"></circle>
                         <line x1="12" y1="16" x2="12" y2="12"></line>
@@ -1170,28 +1250,28 @@ Source code: https://github.com/highlightjs/highlight.js
                     </svg>
                 </button>
             </div>
-                <div class="gc-settings" id="gc-settings-panel">
-                    <div class="gc-settings-title">Choose how NeuraVeil should respond.</div>
-                    <div class="gc-settings-list" id="gc-settings-list"></div>
+                <div class="nv-settings" id="nv-settings-panel">
+                    <div class="nv-settings-title">Choose how NeuraVeil should respond.</div>
+                    <div class="nv-settings-list" id="nv-settings-list"></div>
                 </div>
 
-                <div class="gc-info" id="gc-info-panel">
-                    <div class="gc-info-title">Information</div>
+                <div class="nv-info" id="nv-info-panel">
+                    <div class="nv-info-title">Information</div>
 
-                    <div class="gc-info-grid">
-                        <div class="gc-info-card variant-a">
+                    <div class="nv-info-grid">
+                        <div class="nv-info-card variant-a">
                             <h4>Version</h4>
-                            <p>1.0.8<br>Last updated: 2025-12-28</p>
+                            <p>1.0.9<br>Last updated: 2025-12-31</p>
                         </div>
 
-                        <div class="gc-info-card variant-b">
+                        <div class="nv-info-card variant-b">
                             <h4>Author</h4>
                             <p>Dℝ∃wX / @DREwX-code</p>
-                            <div class="gc-info-links">
+                            <div class="nv-info-links">
                             <!--  GreasyFork SVG icon by denilsonsa
                             Source: https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/GreasyFork.svg -->
 
-                            <a class="gc-info-link" href="https://greasyfork.org/users/1259433-d%E2%84%9D-wx" target="_blank" rel="noopener noreferrer">
+                            <a class="nv-info-link" href="https://greasyfork.org/users/1259433-d%E2%84%9D-wx" target="_blank" rel="noopener noreferrer">
                                 <svg
                                     xmlns="http://www.w3.org/2000/svg"
                                     viewBox="0 0 96 96"
@@ -1228,7 +1308,7 @@ Source code: https://github.com/highlightjs/highlight.js
                                 <span>GreasyFork</span>
                             </a>
 
-                                <a class="gc-info-link" href="https://github.com/DREwX-code" target="_blank" rel="noopener noreferrer">
+                                <a class="nv-info-link" href="https://github.com/DREwX-code" target="_blank" rel="noopener noreferrer">
                                     <svg viewBox="0 0 24 24" fill="currentColor">
                                         <path d="M12 .5a10 10 0 0 0-3.16 19.5c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.46-1.16-1.11-1.47-1.11-1.47-.9-.62.07-.61.07-.61 1 .07 1.53 1.04 1.53 1.04.89 1.53 2.34 1.09 2.9.84.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.95 0-1.1.39-2 1.03-2.7-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02a9.5 9.5 0 0 1 5 0c1.9-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.4.1 2.64.64.7 1.03 1.6 1.03 2.7 0 3.85-2.34 4.7-4.57 4.95.36.31.68.92.68 1.86v2.75c0 .26.18.58.69.48A10 10 0 0 0 12 .5Z"></path>
                                     </svg>
@@ -1237,21 +1317,21 @@ Source code: https://github.com/highlightjs/highlight.js
                             </div>
                         </div>
 
-                        <div class="gc-info-card variant-c">
+                        <div class="nv-info-card variant-c">
                             <h4>About</h4>
                             <p>
                                 NeuraVeil is a modern, in-browser floating chat panel.
                                 AI responses are served through the open-source Pollinations endpoints.
                             </p>
-                            <div class="gc-info-links">
-                               <a class="gc-info-link" href="https://hello.pollinations.ai/" target="_blank" rel="noopener noreferrer">
+                            <div class="nv-info-links">
+                               <a class="nv-info-link" href="https://hello.pollinations.ai/" target="_blank" rel="noopener noreferrer">
                                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="18" height="18">
                                 <path style="fill: #ffffff; stroke:none;" d="M117 74C107.231 69.7971 97.4206 70 87 70L52 70L52 107C52 110.655 53.2747 117.433 50.3966 120.258C48.1657 122.447 43.882 122.231 41 122.808C35.1822 123.972 29.5012 125.801 24 128C21.3907 129.043 17.0648 130.003 16.4113 133.225C15.6968 136.746 18.2516 140.896 19.5787 144C23.188 152.441 27.7557 160.567 33.152 168C50.9487 192.515 77.3192 210.861 108 213.83C118.888 214.884 129.237 212.462 140 212C125.587 230.759 99.6636 220.161 84.4676 238.039C78.6982 244.827 78.5571 252.541 74.686 259.961C72.9705 263.249 69.6858 265.254 67.3403 268.039C63.8007 272.243 62.0938 277.553 62.0185 283C61.8036 298.545 78.8554 310.043 92.9992 301.772C102.52 296.204 106.408 281.672 100.772 272C96.8944 265.347 86.5961 262.749 90.3326 254C90.931 252.599 91.7547 251.238 92.6381 250C101.601 237.442 113.768 239.897 127 236.985C137.36 234.704 147.836 226.835 152 217C154.779 226.403 153 238.218 153 248C153 251.884 153.906 257.17 152.397 260.826C150.949 264.332 146.877 266.226 144.533 269.09C140.18 274.412 138.999 282.381 140.529 289C144.901 307.913 175.241 310.054 179.61 290C181.098 283.167 180.419 274.449 175.775 269.015C172.912 265.665 167.505 263.426 166.318 258.957C165.189 254.703 166 249.376 166 245L166 216C172.604 225.708 180.285 233.672 192 236.841C204.523 240.229 217.395 236.967 226.211 249.015C227.119 250.256 227.965 251.607 228.622 253C233.092 262.474 224.541 263.812 220.367 271.004C214.765 280.655 216.493 294.343 226.04 300.891C239.871 310.378 258.868 299.388 258.921 283C258.939 277.263 256.585 271.366 252.671 267.184C250.261 264.608 246.831 262.996 244.988 259.907C240.975 253.18 240.953 245.377 235.671 239.001C220.088 220.189 193.289 231.272 179 211C220.766 221.806 262.92 202.625 287.279 168C292.398 160.724 296.656 153.096 300.306 145C301.801 141.683 304.067 137.891 303.758 134.105C303.436 130.158 299.126 129.026 296 127.811C290.487 125.669 284.79 123.891 279 122.665C276.34 122.102 272.709 122.206 271.028 119.682C268.671 116.143 270 109.069 270 105L270 70C254.015 70 237.979 69.6221 222 70.0147C217.521 70.1247 209.398 73.8076 205.39 71.7986C201.137 69.6665 198.637 60.852 195.961 57C189.174 47.2314 181.112 38.1938 173.576 29C170.613 25.3861 167.03 19.1444 162.718 17.0864C157.356 14.5276 151.106 25.6572 148.389 29C136.831 43.2172 124.121 56.896 117 74z"/>
                                 <path style="fill: #2d272d; stroke:none;" d="M160 35C152.305 45.2098 143.241 54.4271 136.029 65C133.56 68.6192 129.073 74.3338 129.531 79C129.856 82.3064 132.842 84.7733 135.001 87C138.664 90.7792 142.224 94.6598 145.226 99C153.533 111.01 158.843 126.459 160 141C161.926 136.453 161.862 130.85 163.155 126C165.627 116.73 169.708 107.989 175.004 100C178.458 94.7897 182.528 90.3951 186.995 86.0394C189.003 84.0818 192.151 81.9398 192.469 78.9105C192.899 74.8216 189.102 70.1842 186.996 67C181.889 59.2763 175.989 52.1183 170.081 45C166.983 41.2669 164.376 37.2171 160 35M65 82L65 121C75.0069 122.864 84.4971 124.572 94 128.452C101.279 131.424 107.81 135.902 115 139C110.199 121.923 109.754 104.422 113 87C98.9518 79.627 80.3718 82 65 82M208 137C219.691 133.301 229.731 126.171 242 123.425C245.878 122.557 254.396 122.791 256.972 119.411C258.89 116.896 258 111.96 258 109L258 82C246.617 82 235.323 82.8069 224 82.9969C220.024 83.0636 212.653 82.9235 210.067 86.7022C207.731 90.116 210.789 98.0842 210.961 102C211.49 114.091 208.946 125.113 208 137M196 94C191.363 98.6498 186.899 103.36 183.464 109C172.159 127.559 172 148.966 172 170C188.418 157.915 198.086 133.947 198.961 114C199.235 107.743 199.971 99.1619 196 94M124 95C124 104.506 123.061 114.568 124.289 124C126.328 139.645 135.703 158.053 148 168C148 148.709 148.092 130.69 139.241 113C135.823 106.17 131.089 98.3335 124 95M255 134C245.951 136.75 236.857 137.609 228 141.428C206.487 150.705 187.042 170.398 178 192C188.462 189.509 199.429 192.223 210 190.7C228.373 188.052 242.658 173.125 250.218 157C253.094 150.866 257.72 140.67 255 134M32 139C38.7435 162.409 62.103 186.191 85 194C80.1511 187.986 73.9628 183.236 69.2392 177C60.376 165.299 54.1676 149.673 53 135C45.5584 135.021 39.0339 136.712 32 139M66 135C66.4916 158.691 84.575 184.411 108 190.1C119.096 192.795 130.885 189.354 142 192C131.782 162.517 97.5878 135.652 66 135M269 135C267.131 149.474 261.907 164.163 253.243 176C248.691 182.219 242.611 186.971 238 193C261.173 183.35 279.485 161.855 289 139C282.473 136.913 275.872 135.295 269 135M236 193L237 194L236 193M140 211L141 212L140 211M81.0046 274.667C71.0189 276.698 73.7819 292.76 83.9954 291.091C94.4016 289.391 91.2993 272.573 81.0046 274.667M236.015 274.617C226.584 276.801 229.341 293.034 238.996 291.319C249.603 289.434 246.583 272.169 236.015 274.617M157.108 275.746C148.366 279.349 154.028 294.967 162.981 290.781C172.528 286.318 166.733 271.779 157.108 275.746z"/>
                                 </svg>
                                 <span>Site Pollinations</span>
                                 </a>
-                                <a class="gc-info-link" href="https://github.com/pollinations/pollinations" target="_blank" rel="noopener noreferrer">
+                                <a class="nv-info-link" href="https://github.com/pollinations/pollinations" target="_blank" rel="noopener noreferrer">
                                     <svg viewBox="0 0 24 24" fill="currentColor">
                                         <path d="M12 .5a10 10 0 0 0-3.16 19.5c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.46-1.16-1.11-1.47-1.11-1.47-.9-.62.07-.61.07-.61 1 .07 1.53 1.04 1.53 1.04.89 1.53 2.34 1.09 2.9.84.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.95 0-1.1.39-2 1.03-2.7-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02a9.5 9.5 0 0 1 5 0c1.9-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.4.1 2.64.64.7 1.03 1.6 1.03 2.7 0 3.85-2.34 4.7-4.57 4.95.36.31.68.92.68 1.86v2.75c0 .26.18.58.69.48A10 10 0 0 0 12 .5Z"></path>
                                     </svg>
@@ -1263,46 +1343,64 @@ Source code: https://github.com/highlightjs/highlight.js
                 </div>
 
 
-                <div class="gc-history" id="gc-history-panel">
-                    <div class="gc-history-header">
+                <div class="nv-history" id="nv-history-panel">
+                    <div class="nv-history-header">
                         <span>Recent Conversations</span>
-                        <div class="gc-history-actions">
-                            <div class="gc-history-search" id="gc-history-search">
-                                <button class="gc-search-btn" id="gc-btn-history-search" title="Search for discussions">
+                        <div class="nv-history-actions">
+                            <div class="nv-history-search" id="nv-history-search">
+                                <button class="nv-search-btn" id="nv-btn-history-search" title="Search for discussions">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="6"/><line x1="16.5" y1="16.5" x2="21" y2="21" stroke-linecap="round"/></svg>
                                 </button>
-                                <input type="text" class="gc-search-input" id="gc-input-history-search" placeholder="Search..." spellcheck="false" aria-label="Search conversations">
+                                <input type="text" class="nv-search-input" id="nv-input-history-search" placeholder="Search..." spellcheck="false" aria-label="Search conversations">
                             </div>
-                            <button class="gc-clear-all" id="gc-btn-clear-all" title="Clear All History">
+                            <button class="nv-clear-all" id="nv-btn-clear-all" title="Clear All History">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" stroke-linecap="round" stroke-linejoin="round"/></svg>
                             </button>
                         </div>
                     </div>
-                    <div class="gc-history-list" id="gc-history-list"></div>
+                    <div class="nv-history-list" id="nv-history-list"></div>
                 </div>
 
-                <div class="gc-messages" id="gc-messages">
+                <div class="nv-messages" id="nv-messages">
                     <div class="typing-indicator" id="typing-indicator">
                         <div class="dot"></div><div class="dot"></div><div class="dot"></div>
+                        <span id="nv-typing-text" style="margin-left:8px; font-size:11px; color:var(--nv-text-muted); display:none; animation: fadeIn 0.3s;"></span>
                     </div>
                 </div>
-                <div class="gc-input-area">
-                    <textarea class="gc-input" placeholder="Type a message..." spellcheck="false" rows="1"></textarea>
-                    <button class="gc-img-btn" title="Generate Image">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-                    </button>
-                    <button class="gc-send-btn">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
-                    </button>
-                    <span class="gc-ghost-pill" id="gc-ghost-pill">Mode fantome actif</span>
+                <div class="nv-input-area">
+                    <div class="nv-input-wrapper">
+                        <textarea class="nv-input" placeholder="Type a message..." spellcheck="false" rows="1"></textarea>
+                        <div class="nv-controls-row">
+                             <button class="nv-img-btn-small" id="nv-btn-img-toggle" title="Image Mode">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                             </button>
+                             <select class="nv-model-select" id="nv-model-select" title="Model Selection">
+                                <option value="auto">Reasoning: Auto</option>
+                                <option value="minimal">Reasoning: Minimal</option>
+                                <option value="low" selected>Reasoning: Low</option>
+                                <option value="medium">Reasoning: Medium</option>
+                                <option value="high">Reasoning: High</option>
+                                <option value="ultra">Reasoning: Ultra</option>
+                             </select>
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 8px; align-items: baseline;">
+                        <button class="nv-img-btn-small" id="nv-btn-mic" title="Voice Input" style="margin-top: 13px;">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                        </button>
+                        <button class="nv-send-btn" style="margin-top: 1px;">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                        </button>
+                    </div>
+                    <span class="nv-ghost-pill" id="nv-ghost-pill">Mode fantome actif</span>
                 </div>
 
-                <div class="gc-modal-overlay" id="gc-modal-overlay">
-                    <div class="gc-modal">
-                        <div class="gc-modal-text" id="gc-modal-text">Are you sure?</div>
-                        <div class="gc-modal-actions">
-                            <button class="gc-btn gc-btn-secondary" id="gc-modal-cancel">Cancel</button>
-                            <button class="gc-btn gc-btn-danger" id="gc-modal-confirm">Delete</button>
+                <div class="nv-modal-overlay" id="nv-modal-overlay">
+                    <div class="nv-modal">
+                        <div class="nv-modal-text" id="nv-modal-text">Are you sure?</div>
+                        <div class="nv-modal-actions">
+                            <button class="nv-btn nv-btn-secondary" id="nv-modal-cancel">Cancel</button>
+                            <button class="nv-btn nv-btn-danger" id="nv-modal-confirm">Delete</button>
                         </div>
                     </div>
                 </div>
@@ -1314,36 +1412,38 @@ Source code: https://github.com/highlightjs/highlight.js
             this.elements = {
                 trigger,
                 panel,
-                closeBtn: panel.querySelector('#gc-btn-close'),
-                sidebarBtn: panel.querySelector('#gc-btn-sidebar'),
-                historyBtn: panel.querySelector('#gc-btn-history'),
-                newChatBtn: panel.querySelector('#gc-btn-new'),
-                clearAllBtn: panel.querySelector('#gc-btn-clear-all'),
-                modelSelect: panel.querySelector('#gc-model-select'),
-                toggleExtraBtn: panel.querySelector('#gc-btn-toggle-extra'),
-                headerExtra: panel.querySelector('#gc-header-extra'),
-                settingsBtn: panel.querySelector('#gc-btn-settings'),
-                ghostBtn: panel.querySelector('#gc-btn-ghost'),
-                ghostPill: panel.querySelector('#gc-ghost-pill'),
-                statusDot: panel.querySelector('.gc-status-dot'),
-                infoBtn: panel.querySelector('#gc-btn-info'),
-                settingsPanel: panel.querySelector('#gc-settings-panel'),
-                settingsList: panel.querySelector('#gc-settings-list'),
-                infoPanel: panel.querySelector('#gc-info-panel'),
-                historyPanel: panel.querySelector('#gc-history-panel'),
-                historyList: panel.querySelector('#gc-history-list'),
-                historySearchWrap: panel.querySelector('#gc-history-search'),
-                historySearchInput: panel.querySelector('#gc-input-history-search'),
-                historySearchBtn: panel.querySelector('#gc-btn-history-search'),
-                msgContainer: panel.querySelector('#gc-messages'),
-                input: panel.querySelector('.gc-input'),
-                sendBtn: panel.querySelector('.gc-send-btn'),
-                imgBtn: panel.querySelector('.gc-img-btn'),
+                closeBtn: panel.querySelector('#nv-btn-close'),
+                sidebarBtn: panel.querySelector('#nv-btn-sidebar'),
+                historyBtn: panel.querySelector('#nv-btn-history'),
+                newChatBtn: panel.querySelector('#nv-btn-new'),
+                clearAllBtn: panel.querySelector('#nv-btn-clear-all'),
+                modelSelect: panel.querySelector('#nv-model-select'),
+                toggleExtraBtn: panel.querySelector('#nv-btn-toggle-extra'),
+                headerExtra: panel.querySelector('#nv-header-extra'),
+                settingsBtn: panel.querySelector('#nv-btn-settings'),
+                ghostBtn: panel.querySelector('#nv-btn-ghost'),
+                ghostPill: panel.querySelector('#nv-ghost-pill'),
+                statusLogo: panel.querySelector('.nv-status-logo'),
+                infoBtn: panel.querySelector('#nv-btn-info'),
+                settingsPanel: panel.querySelector('#nv-settings-panel'),
+                settingsList: panel.querySelector('#nv-settings-list'),
+                infoPanel: panel.querySelector('#nv-info-panel'),
+                historyPanel: panel.querySelector('#nv-history-panel'),
+                historyList: panel.querySelector('#nv-history-list'),
+                historySearchWrap: panel.querySelector('#nv-history-search'),
+                historySearchInput: panel.querySelector('#nv-input-history-search'),
+                historySearchBtn: panel.querySelector('#nv-btn-history-search'),
+                msgContainer: panel.querySelector('#nv-messages'),
+                input: panel.querySelector('.nv-input'),
+                sendBtn: panel.querySelector('.nv-send-btn'),
+                micBtn: panel.querySelector('#nv-btn-mic'),
+                imgBtn: panel.querySelector('#nv-btn-img-toggle'),
                 typingIndicator: panel.querySelector('#typing-indicator'),
-                modalOverlay: panel.querySelector('#gc-modal-overlay'),
-                modalText: panel.querySelector('#gc-modal-text'),
-                modalCancel: panel.querySelector('#gc-modal-cancel'),
-                modalConfirm: panel.querySelector('#gc-modal-confirm')
+                typingText: panel.querySelector('#nv-typing-text'),
+                modalOverlay: panel.querySelector('#nv-modal-overlay'),
+                modalText: panel.querySelector('#nv-modal-text'),
+                modalCancel: panel.querySelector('#nv-modal-cancel'),
+                modalConfirm: panel.querySelector('#nv-modal-confirm')
             };
 
             this.buildSettingsOptions();
@@ -1367,10 +1467,11 @@ Source code: https://github.com/highlightjs/highlight.js
             this.elements.infoBtn.addEventListener('click', () => this.toggleInfoPanel());
             this.elements.ghostBtn.addEventListener('click', () => this.toggleGhostMode());
 
+            this.elements.micBtn.addEventListener('click', () => this.toggleSpeech());
             this.elements.sendBtn.addEventListener('click', () => this.handleSend());
             this.elements.imgBtn.addEventListener('click', () => this.toggleImageMode());
 
-            this.elements.input.addEventListener('input', () => this.autoResizeInput());
+            this.elements.input.addEventListener('input', () => this.adjustHeight());
             this.elements.input.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
@@ -1416,6 +1517,7 @@ Source code: https://github.com/highlightjs/highlight.js
                 this.elements.historyPanel.classList.remove('visible');
             }
             this.updateGhostUI();
+            this.updateBodyOffset();
         }
 
         toggleInfoPanel() {
@@ -1433,11 +1535,16 @@ Source code: https://github.com/highlightjs/highlight.js
             const active = this.state.isGhostMode;
             this.elements.ghostBtn.classList.toggle('ghost-active', active);
             this.elements.panel.classList.toggle('ghost-mode', active);
-            if (this.elements.statusDot) {
-                this.elements.statusDot.classList.toggle('ghost-active', active);
+            if (this.elements.statusLogo) {
+                this.elements.statusLogo.classList.toggle('ghost-active', active);
             }
             this.elements.ghostPill.textContent = active ? 'Ghost Mode is active — nothing is being saved.' : '';
             this.elements.ghostPill.classList.toggle('visible', active);
+
+            // Refresh model select if in image mode
+            if (this.state.isImageMode) {
+                this.renderModelSelect();
+            }
         }
 
         buildSettingsOptions() {
@@ -1445,11 +1552,11 @@ Source code: https://github.com/highlightjs/highlight.js
             this.STYLE_OPTIONS.forEach((option) => {
                 const button = document.createElement('button');
                 button.type = 'button';
-                button.className = 'gc-settings-item';
+                button.className = 'nv-settings-item';
                 button.dataset.style = option.id;
                 button.innerHTML = `
-                    <div class="gc-settings-label">${option.label}</div>
-                    <div class="gc-settings-desc">${option.desc}</div>
+                    <div class="nv-settings-label">${option.label}</div>
+                    <div class="nv-settings-desc">${option.desc}</div>
                 `;
                 button.addEventListener('click', () => this.setResponseStyle(option.id));
                 this.elements.settingsList.appendChild(button);
@@ -1479,7 +1586,7 @@ Source code: https://github.com/highlightjs/highlight.js
         }
 
         applyActiveStyle() {
-            const items = this.elements.settingsList.querySelectorAll('.gc-settings-item');
+            const items = this.elements.settingsList.querySelectorAll('.nv-settings-item');
             items.forEach((item) => {
                 item.classList.toggle('active', item.dataset.style === this.state.responseStyle);
             });
@@ -1488,12 +1595,35 @@ Source code: https://github.com/highlightjs/highlight.js
         autoResizeInput() {
             if (!this.elements.input) return;
             const el = this.elements.input;
-            el.style.height = 'auto';
+
+            // Reset to 1 row to get accurate scrollHeight
+            el.rows = 1;
+
             const lineHeight = parseFloat(getComputedStyle(el).lineHeight) || 20;
-            const maxHeight = lineHeight * this.INPUT_MAX_ROWS;
-            const newHeight = Math.min(el.scrollHeight, maxHeight);
-            el.style.height = `${newHeight}px`;
-            el.style.overflowY = el.scrollHeight > maxHeight ? 'auto' : 'hidden';
+            const padding = parseFloat(getComputedStyle(el).paddingTop) + parseFloat(getComputedStyle(el).paddingBottom);
+
+            // Calculate how many rows we need
+            const contentHeight = el.scrollHeight - padding;
+            const calculatedRows = Math.ceil(contentHeight / lineHeight);
+
+            // Limit to INPUT_MAX_ROWS (5)
+            const newRows = Math.min(calculatedRows, this.INPUT_MAX_ROWS);
+            el.rows = newRows;
+
+            // Enable scroll if content exceeds max rows
+            if (calculatedRows > this.INPUT_MAX_ROWS) {
+                el.style.overflowY = 'auto';
+            } else {
+                el.style.overflowY = 'hidden';
+            }
+        }
+
+        adjustHeight() {
+            this.autoResizeInput();
+            // Scroll to bottom of textarea
+            if (this.elements.input) {
+                this.elements.input.scrollTop = this.elements.input.scrollHeight;
+            }
         }
 
         async ensureHighlight() {
@@ -1521,13 +1651,13 @@ Source code: https://github.com/highlightjs/highlight.js
             return this.hljsReady;
         }
 
-applyHighlighting(container) {
-    this.loadHighlightJS().then(() => {
-        container.querySelectorAll('pre code').forEach(codeEl => {
-            hljs.highlightElement(codeEl);
-        });
-    });
-}
+        applyHighlighting(container) {
+            this.loadHighlightJS().then(() => {
+                container.querySelectorAll('pre code').forEach(codeEl => {
+                    hljs.highlightElement(codeEl);
+                });
+            });
+        }
 
 
 
@@ -1547,7 +1677,7 @@ applyHighlighting(container) {
 
             // Try modern API, but always run fallback immediately to stay in the user gesture.
             if (navigator.clipboard?.writeText) {
-                navigator.clipboard.writeText(text).catch(() => {});
+                navigator.clipboard.writeText(text).catch(() => { });
             }
             fallbackCopy();
         }
@@ -1578,14 +1708,65 @@ applyHighlighting(container) {
             this.state.isImageMode = !this.state.isImageMode;
             this.elements.imgBtn.classList.toggle('active', this.state.isImageMode);
 
+            this.elements.imgBtn.classList.toggle('active', this.state.isImageMode);
+            this.renderModelSelect();
+        }
+
+        renderModelSelect() {
+            const select = this.elements.modelSelect;
+            select.innerHTML = '';
+            select.disabled = false; // Reset disabled state by default
+            select.classList.remove('nv-ghost-icon');
+
             if (this.state.isImageMode) {
                 this.elements.input.placeholder = 'Describe your image...';
+
+                if (this.state.isGhostMode) {
+                    // Restrict to Pollinations Only
+                    const opt = document.createElement('option');
+                    opt.value = 'pollinations';
+                    opt.textContent = 'Pollinations (private)';
+                    select.appendChild(opt);
+                    select.value = 'pollinations';
+                    select.disabled = true; // User cannot change it
+                    select.classList.add('nv-ghost-icon');
+                } else {
+                    // Populate with Image Models
+                    this.IMAGE_MODELS.forEach(m => {
+                        const opt = document.createElement('option');
+                        opt.value = m.id;
+                        opt.textContent = `Model: ${m.label}`;
+                        select.appendChild(opt);
+                    });
+                    // Default to pollinations
+                    select.value = 'pollinations';
+                }
             } else {
                 this.elements.input.placeholder = 'Type a message...';
+                // Restore Reasoning Levels
+                const levels = [
+                    { val: 'auto', txt: 'Auto' }, { val: 'minimal', txt: 'Minimal' },
+                    { val: 'low', txt: 'Low' }, { val: 'medium', txt: 'Medium' },
+                    { val: 'high', txt: 'High' }, { val: 'ultra', txt: 'Ultra' }
+                ];
+                levels.forEach(l => {
+                    const opt = document.createElement('option');
+                    opt.value = l.val;
+                    opt.textContent = `Reasoning: ${l.txt}`;
+                    select.appendChild(opt);
+                });
+                // Restore saved reasoning
+                select.value = this.state.reasoningEffort;
             }
         }
 
         changeReasoningEffort(level) {
+            // If in image mode, change is checking image model, not reasoning
+            if (this.state.isImageMode) {
+                // Could save image model preference here if needed
+                return;
+            }
+
             if (this.REASONING_LEVELS.includes(level)) {
                 this.state.reasoningEffort = level;
                 GM_setValue('NeuraVeil_reasoning', level);
@@ -1604,16 +1785,40 @@ applyHighlighting(container) {
             this.setLoading(true, requestChatId);
 
             try {
-                // Pollinations image format
-                const encoded = encodeURIComponent(prompt);
-                const imageUrl = `https://image.pollinations.ai/prompt/${encoded}?nologo=true`;
+                const selectedModel = this.elements.modelSelect.value;
+                let imageUrl = '';
 
-                // Simulate loading delay for better UX
-                await new Promise(r => setTimeout(r, 1000));
+                if (selectedModel === 'ai-horde') {
+                    this.setLoadingText('Generating AI Horde in progress (please wait)');
+                    imageUrl = await this.generateHordeImage(prompt);
+                } else {
+                    // Pollinations
+                    const encoded = encodeURIComponent(prompt);
+                    const isPrivate = this.state.isGhostMode ? '&private=true' : '';
+                    const seed = Math.floor(Math.random() * 100000);
+                    // Base pollinations URL without explicit model
+                    imageUrl = `https://image.pollinations.ai/prompt/${encoded}?nologo=true${isPrivate}&seed=${seed}`;
+                }
 
-                const imageHtml = `<img src="${imageUrl}" alt="${prompt}" style="max-width: 100%; border-radius: 8px; margin-top: 4px;">`;
+                if (!imageUrl) throw new Error('No image URL generated');
 
-                this.appendMessageToChat(requestChatId, 'assistant', imageHtml, true);
+                // Preload image via Fetch to handle rate limits and avoid double-requests
+                const blobUrl = await this.preloadImage(imageUrl);
+
+                // We save original URL to history for persistence, but use Blob URL for display
+                const imageHtmlOriginal = `<img src="${imageUrl}" alt="${prompt}" style="max-width: 100%; border-radius: 8px; margin-top: 4px;">`;
+                this.appendMessageToChat(requestChatId, 'assistant', imageHtmlOriginal, true);
+
+                // Swap src to blobUrl in DOM to prevent re-fetching and hitting rate limits
+                setTimeout(() => {
+                    const images = this.elements.msgContainer.querySelectorAll('img');
+                    if (images.length) {
+                        const lastImg = images[images.length - 1];
+                        if (lastImg.getAttribute('src') === imageUrl) {
+                            lastImg.src = blobUrl;
+                        }
+                    }
+                }, 0);
 
                 // Reset image mode after generation
                 if (this.state.isImageMode) {
@@ -1624,7 +1829,7 @@ applyHighlighting(container) {
                 this.appendMessageToChat(
                     requestChatId,
                     'assistant',
-                    'Error • Unable to generate image. Check your connection or try again in a moment.'
+                    'Error • Unable to generate image. ' + (error.message || 'Check your connection.')
                 );
                 console.error('NeuraVeil Image Error:', error);
             } finally {
@@ -1632,10 +1837,105 @@ applyHighlighting(container) {
             }
         }
 
+        async generateHordeImage(prompt) {
+            const apiKey = '0000000000'; // Anonymous key
+            const payload = {
+                prompt: prompt,
+                params: {
+                    steps: 30,
+                    n: 1,
+                    sampler_name: 'k_euler',
+                    width: 512,
+                    height: 512,
+                    cfg_scale: 7
+                },
+                nsfw: true, // Allow NSFW if blocked by worker preference, but script is generally SFW
+                censor_nsfw: false,
+                models: ['stable_diffusion']
+            };
+
+            // 1. Submit Job
+            const submitResponse = await fetch('https://stablehorde.net/api/v2/generate/async', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'apikey': apiKey
+                },
+                body: JSON.stringify(payload)
+            });
+
+            if (!submitResponse.ok) {
+                throw new Error(`Horde API Error: ${submitResponse.status}`);
+            }
+
+            const submitData = await submitResponse.json();
+            const id = submitData.id;
+            if (!id) throw new Error('No Job ID from Horde');
+
+            // 2. Poll Status
+            let attempts = 0;
+            const maxAttempts = 60;
+
+            while (attempts < maxAttempts) {
+                await new Promise(r => setTimeout(r, 2000));
+                attempts++;
+
+                const checkResponse = await fetch(`https://stablehorde.net/api/v2/generate/check/${id}`, {
+                    headers: { 'apikey': apiKey }
+                });
+
+                if (!checkResponse.ok) continue;
+                const checkData = await checkResponse.json();
+
+                if (checkData.done) {
+                    // 3. Get Result
+                    const statusResponse = await fetch(`https://stablehorde.net/api/v2/generate/status/${id}`, {
+                        headers: { 'apikey': apiKey }
+                    });
+                    if (!statusResponse.ok) throw new Error('Failed to retrieve Horde image');
+                    const statusData = await statusResponse.json();
+                    const generation = statusData.generations && statusData.generations[0];
+                    // V2 async status endpoint returns:
+                    // { generations: [{ img: "...", ... }] }
+                    // `img` can be a URL or Base64 depending on the worker.
+                    if (generation && generation.img) {
+                        return generation.img;
+                    }
+                    return statusData.generations[0].img;
+                }
+            }
+            throw new Error('Horde generation timed out');
+        }
+
+        async preloadImage(url) {
+            try {
+                const response = await fetch(url);
+
+                // Check for specific Rate Limit headers or errors
+                // Pollinations might return 200 OK but with a rate limit image, checking headers:
+                const rateLimited = response.headers.get('x-rate-limited') === 'true' ||
+                    response.headers.get('x-error-type') === 'Too Many Requests';
+
+                if (rateLimited) {
+                    throw new Error('Pollinations Rate Limit Reached. Please try again later.');
+                }
+
+                if (!response.ok) {
+                    throw new Error(`Image load failed: ${response.status}`);
+                }
+
+                const blob = await response.blob();
+                return URL.createObjectURL(blob);
+            } catch (error) {
+                throw error;
+            }
+        }
+
         togglePanel(show) {
             this.state.isOpen = show;
             this.elements.panel.classList.toggle('open', show);
             if (show) setTimeout(() => this.elements.input.focus(), 300);
+            this.updateBodyOffset();
         }
 
         toggleSidebar() {
@@ -1643,6 +1943,7 @@ applyHighlighting(container) {
             this.elements.panel.classList.toggle('sidebar', this.state.isSidebar);
             // If checking sidebar while closed, open it
             if (this.state.isSidebar && !this.state.isOpen) this.togglePanel(true);
+            else this.updateBodyOffset();
         }
 
         toggleHistory() {
@@ -1744,6 +2045,11 @@ applyHighlighting(container) {
                 this.resetHistorySearch();
             }
         }
+        updateBodyOffset() {
+            const shouldOffset = this.state.isSidebar && this.state.isOpen;
+            document.body.style.marginRight = shouldOffset ? `${this.SIDEBAR_WIDTH}px` : '';
+        }
+
 
         startNewChat() {
             this.currentChatId = Date.now();
@@ -1884,14 +2190,14 @@ applyHighlighting(container) {
             if (e) e.stopPropagation();
             const chat = this.history.find(h => h.id === chatId);
             if (!chat) return;
-            const titleEl = item.querySelector('.gc-h-title');
+            const titleEl = item.querySelector('.nv-h-title');
             if (!titleEl) return;
 
             const maxLength = 90;
             const original = chat.manualTitle || chat.title || 'Conversation';
             titleEl.contentEditable = 'true';
             titleEl.spellcheck = false;
-            titleEl.classList.add('gc-h-editing');
+            titleEl.classList.add('nv-h-editing');
             titleEl.focus();
 
             const range = document.createRange();
@@ -1943,7 +2249,7 @@ applyHighlighting(container) {
                 titleEl.removeEventListener('mousedown', blockOpen);
                 titleEl.removeEventListener('mouseup', blockOpen);
                 titleEl.removeEventListener('click', blockOpen);
-                titleEl.classList.remove('gc-h-editing');
+                titleEl.classList.remove('nv-h-editing');
                 titleEl.contentEditable = 'false';
                 if (!commit) {
                     titleEl.textContent = original;
@@ -1990,7 +2296,7 @@ applyHighlighting(container) {
             if (!query) return this.escapeHtml(title);
             const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             const regex = new RegExp(escapedQuery, 'gi');
-            return this.escapeHtml(title).replace(regex, (match) => `<span class="gc-h-match">${match}</span>`);
+            return this.escapeHtml(title).replace(regex, (match) => `<span class="nv-h-match">${match}</span>`);
         }
 
         renderHistoryList() {
@@ -2029,7 +2335,7 @@ applyHighlighting(container) {
 
             if (!items.length) {
                 const empty = document.createElement('div');
-                empty.className = 'gc-history-empty';
+                empty.className = 'nv-history-empty';
                 empty.textContent = query ? 'Aucune discussion trouvée.' : 'No conversations yet.';
                 this.elements.historyList.appendChild(empty);
                 return;
@@ -2037,7 +2343,7 @@ applyHighlighting(container) {
 
             items.forEach((chat, index) => {
                 const item = document.createElement('div');
-                item.className = 'gc-history-item';
+                item.className = 'nv-history-item';
                 if (chat.id === this.currentChatId) item.classList.add('active');
                 const isFocused = query && index === this.state.historySearchIndex;
                 if (isFocused) item.classList.add('search-focus');
@@ -2046,37 +2352,37 @@ applyHighlighting(container) {
                 const titleText = chat.title || '';
                 const highlightedTitle = this.highlightHistoryTitle(titleText, query);
                 item.innerHTML = `
-                    <div class="gc-h-title">${highlightedTitle}</div>
-                    <div class="gc-h-date">${date}</div>
-                    <div class="gc-h-rename" title="Rename">
+                    <div class="nv-h-title">${highlightedTitle}</div>
+                    <div class="nv-h-date">${date}</div>
+                    <div class="nv-h-rename" title="Rename">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
                     </div>
-                    <div class="gc-h-delete" title="Delete">
+                    <div class="nv-h-delete" title="Delete">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" stroke-linecap="round" stroke-linejoin="round"/></svg>
                     </div>
                 `;
                 item.onclick = () => this.loadChat(chat.id);
-                item.querySelector('.gc-h-rename').onclick = (e) => this.startInlineRename(chat.id, item, e);
-                item.querySelector('.gc-h-delete').onclick = (e) => this.deleteChat(chat.id, e);
+                item.querySelector('.nv-h-rename').onclick = (e) => this.startInlineRename(chat.id, item, e);
+                item.querySelector('.nv-h-delete').onclick = (e) => this.deleteChat(chat.id, e);
                 this.elements.historyList.appendChild(item);
             });
         }
 
         renderMessage(msg) {
             // Check if message content looks like an image tag
-            if (msg.content.startsWith('<img')) {
-                return `<div class="gc-message ${msg.role}">${msg.content}</div>`;
+            if (msg.content.trim().startsWith('<img')) {
+                return `<div class="nv-message ${msg.role}">${msg.content}</div>`;
             }
             if (msg.role === 'assistant') {
                 const rendered = this.renderToolMarkup(msg.content);
                 if (rendered.hasTool) {
-                    return `<div class="gc-message ${msg.role}">${rendered.html}</div>`;
+                    return `<div class="nv-message ${msg.role}">${rendered.html}</div>`;
                 }
             }
             // For text, sanitize/escape
             const div = document.createElement('div');
             div.textContent = msg.content;
-            return `<div class="gc-message ${msg.role}">${div.innerHTML}</div>`;
+            return `<div class="nv-message ${msg.role}">${div.innerHTML}</div>`;
         }
 
         escapeHtml(value) {
@@ -2308,24 +2614,7 @@ applyHighlighting(container) {
             return `${assistantText}\n\n${toolTag}`;
         }
 
-        preloadImage(url, timeoutMs = 8000) {
-            return new Promise((resolve, reject) => {
-                const img = new Image();
-                const timer = setTimeout(() => {
-                    img.src = '';
-                    reject(new Error('Image load timeout'));
-                }, timeoutMs);
-                img.onload = () => {
-                    clearTimeout(timer);
-                    resolve(url);
-                };
-                img.onerror = () => {
-                    clearTimeout(timer);
-                    reject(new Error('Image failed to load'));
-                };
-                img.src = url;
-            });
-        }
+
 
         extractWikipediaImageData(data) {
             const pages = data?.query?.pages;
@@ -2445,7 +2734,7 @@ applyHighlighting(container) {
         }
 
         updateToolImageCaption(container, text) {
-            const caption = container.querySelector('.gc-tool-caption');
+            const caption = container.querySelector('.nv-tool-caption');
             if (!caption) return;
             const value = String(text || '').trim();
             if (value) {
@@ -2458,14 +2747,14 @@ applyHighlighting(container) {
         }
 
         initToolImages(container) {
-            const nodes = container.querySelectorAll('[data-gc-image-query]');
+            const nodes = container.querySelectorAll('[data-nv-image-query]');
             nodes.forEach((node) => {
-                if (node.dataset.gcImageLoaded === '1') return;
-                node.dataset.gcImageLoaded = '1';
-                const query = node.dataset.gcImageQuery || '';
+                if (node.dataset.nvImageLoaded === '1') return;
+                node.dataset.nvImageLoaded = '1';
+                const query = node.dataset.nvImageQuery || '';
                 const img = node.querySelector('img');
                 if (!query || !img) return;
-                const alt = node.dataset.gcImageAlt || query;
+                const alt = node.dataset.nvImageAlt || query;
                 if (!img.alt) img.alt = alt;
                 this.searchWebImage(query)
                     .then((result) => {
@@ -2484,13 +2773,13 @@ applyHighlighting(container) {
         }
 
         initCodeCopy(container) {
-            const buttons = container.querySelectorAll('.gc-code-copy');
+            const buttons = container.querySelectorAll('.nv-code-copy');
             buttons.forEach((btn) => {
-                if (btn.dataset.gcCopyBound === '1') return;
-                btn.dataset.gcCopyBound = '1';
+                if (btn.dataset.nvCopyBound === '1') return;
+                btn.dataset.nvCopyBound = '1';
                 btn.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    const wrapper = btn.closest('.gc-tool-code, .gc-code-block');
+                    const wrapper = btn.closest('.nv-tool-code, .nv-code-block');
                     const codeEl = wrapper?.querySelector('code');
                     const text = codeEl?.textContent || '';
                     if (!text.trim()) return;
@@ -2520,7 +2809,7 @@ applyHighlighting(container) {
                 if (safeUrl) {
                     const safeText = this.escapeHtml(url);
                     const safeHref = this.escapeAttr(safeUrl);
-                    html += `<a class="gc-inline-link" href="${safeHref}" target="_blank" rel="noopener noreferrer">${safeText}</a>`;
+                    html += `<a class="nv-inline-link" href="${safeHref}" target="_blank" rel="noopener noreferrer">${safeText}</a>`;
                     hasLinks = true;
                 } else {
                     html += this.escapeHtml(match[1]);
@@ -2551,7 +2840,7 @@ applyHighlighting(container) {
                 if (safeUrl) {
                     const safeText = this.escapeHtml(match[1]);
                     const safeHref = this.escapeAttr(safeUrl);
-                    html += `<a class="gc-inline-link" href="${safeHref}" target="_blank" rel="noopener noreferrer">${safeText}</a>`;
+                    html += `<a class="nv-inline-link" href="${safeHref}" target="_blank" rel="noopener noreferrer">${safeText}</a>`;
                     hasLinks = true;
                 } else {
                     html += this.escapeHtml(match[0]);
@@ -2582,7 +2871,7 @@ applyHighlighting(container) {
                 hasMarkup = hasMarkup || beforeRendered.hasLinks;
 
                 const code = this.escapeHtml(match[1]);
-                html += `<code class="gc-inline-code">${code}</code>`;
+                html += `<code class="nv-inline-code">${code}</code>`;
                 hasMarkup = true;
 
                 lastIndex = inlineCodeRegex.lastIndex;
@@ -2615,7 +2904,7 @@ applyHighlighting(container) {
                 const rawCode = match[2].replace(/\s+$/, '');
                 const safeCode = this.escapeHtml(rawCode);
                 const codeClass = ` class="language-${langClass}"`;
-                html += `<div class="gc-code-block"><div class="gc-code-header"><div class="gc-code-left"><span class="gc-code-label">Code</span><button class="gc-code-copy" title="Copy code"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button></div><span class="gc-code-lang">${langLabel}</span></div><pre><code${codeClass}>${safeCode}</code></pre></div>`;
+                html += `<div class="nv-code-block"><div class="nv-code-header"><div class="nv-code-left"><span class="nv-code-label">Code</span><button class="nv-code-copy" title="Copy code"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button></div><span class="nv-code-lang">${langLabel}</span></div><pre><code${codeClass}>${safeCode}</code></pre></div>`;
                 hasMarkup = true;
 
                 lastIndex = codeBlockRegex.lastIndex;
@@ -2634,8 +2923,8 @@ applyHighlighting(container) {
             const safeAlt = this.escapeAttr(alt || '');
             const safeLabel = this.escapeHtml(label || 'Image');
             const safeCaption = caption ? this.escapeHtml(caption) : '';
-            const captionHtml = safeCaption ? `<div class="gc-tool-caption">${safeCaption}</div>` : '';
-            return `<div class="gc-tool gc-tool-image"><div class="gc-tool-label">${safeLabel}</div><img src="${safeUrl}" alt="${safeAlt}" loading="lazy">${captionHtml}</div>`;
+            const captionHtml = safeCaption ? `<div class="nv-tool-caption">${safeCaption}</div>` : '';
+            return `<div class="nv-tool nv-tool-image"><div class="nv-tool-label">${safeLabel}</div><img src="${safeUrl}" alt="${safeAlt}" loading="lazy">${captionHtml}</div>`;
         }
 
         renderImageToolWithQuery(query, alt, label, caption) {
@@ -2644,8 +2933,8 @@ applyHighlighting(container) {
             const safeLabel = this.escapeHtml(label || 'Image');
             const safeCaption = caption ? this.escapeHtml(caption) : '';
             const captionStyle = safeCaption ? '' : ' style="display:none"';
-            const captionHtml = `<div class="gc-tool-caption" data-gc-image-caption${captionStyle}>${safeCaption}</div>`;
-            return `<div class="gc-tool gc-tool-image" data-gc-image-query="${safeQuery}" data-gc-image-alt="${safeAlt}"><div class="gc-tool-label">${safeLabel}</div><img alt="${safeAlt}" loading="lazy">${captionHtml}</div>`;
+            const captionHtml = `<div class="nv-tool-caption" data-nv-image-caption${captionStyle}>${safeCaption}</div>`;
+            return `<div class="nv-tool nv-tool-image" data-nv-image-query="${safeQuery}" data-nv-image-alt="${safeAlt}"><div class="nv-tool-label">${safeLabel}</div><img alt="${safeAlt}" loading="lazy">${captionHtml}</div>`;
         }
 
         renderToolCall(toolName, attrs) {
@@ -2680,7 +2969,7 @@ applyHighlighting(container) {
                 const text = attrs.text || url;
                 const safeText = this.escapeHtml(text);
                 const safeUrl = this.escapeAttr(url);
-                return `<div class="gc-tool gc-tool-link"><a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeText}</a></div>`;
+                return `<div class="nv-tool nv-tool-link"><a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeText}</a></div>`;
             }
             return '';
         }
@@ -2713,7 +3002,7 @@ applyHighlighting(container) {
                     const rawCode = match[2].replace(/\s+$/, '');
                     const safeCode = this.escapeHtml(rawCode);
                     const codeClass = ` class="language-${langClass}"`;
-                    html += `<div class="gc-tool gc-tool-code"><div class="gc-code-header"><div class="gc-code-left"><span class="gc-code-label">Code</span><button class="gc-code-copy" title="Copy code"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button></div><span class="gc-code-lang">${langLabel}</span></div><pre><code${codeClass}>${safeCode}</code></pre></div>`;
+                    html += `<div class="nv-tool nv-tool-code"><div class="nv-code-header"><div class="nv-code-left"><span class="nv-code-label">Code</span><button class="nv-code-copy" title="Copy code"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button></div><span class="nv-code-lang">${langLabel}</span></div><pre><code${codeClass}>${safeCode}</code></pre></div>`;
                     hasTool = true;
                 } else {
                     const toolName = (match[3] || '').toLowerCase();
@@ -2756,21 +3045,21 @@ applyHighlighting(container) {
 
         updateMessageContent(messageIndex) {
             // Find the message element by index
-            const messageElements = this.elements.msgContainer.querySelectorAll('.gc-message');
+            const messageElements = this.elements.msgContainer.querySelectorAll('.nv-message');
             const messageElement = messageElements[messageIndex];
             if (!messageElement) return;
 
             const msg = this.messages[messageIndex];
             if (!msg || msg.role !== 'assistant') return;
 
-            let contentDiv = messageElement.querySelector('.gc-message-content');
+            let contentDiv = messageElement.querySelector('.nv-message-content');
             if (!contentDiv) {
                 // If no content wrapper exists, create one
                 contentDiv = document.createElement('div');
-                contentDiv.className = 'gc-message-content';
+                contentDiv.className = 'nv-message-content';
 
                 // Insert after tabs if they exist, otherwise at the beginning
-                const tabsContainer = messageElement.querySelector('.gc-version-tabs');
+                const tabsContainer = messageElement.querySelector('.nv-version-tabs');
                 if (tabsContainer) {
                     tabsContainer.after(contentDiv);
                 } else {
@@ -2781,7 +3070,7 @@ applyHighlighting(container) {
             contentDiv.innerHTML = '';
             if (msg.isLoading && msg.regenTargetIndex !== undefined && msg.currentVersion === msg.regenTargetIndex) {
                 const loadingDiv = document.createElement('div');
-                loadingDiv.className = 'gc-inline-loading';
+                loadingDiv.className = 'nv-inline-loading';
                 loadingDiv.innerHTML = '<div class="dot"></div><div class="dot"></div><div class="dot"></div>';
                 contentDiv.appendChild(loadingDiv);
             } else {
@@ -2792,7 +3081,7 @@ applyHighlighting(container) {
             this.applyHighlighting(this.shadow);
 
             if (msg.versions && msg.versions.length > 1) {
-                const tabs = messageElement.querySelectorAll('.gc-version-tab');
+                const tabs = messageElement.querySelectorAll('.nv-version-tab');
                 tabs.forEach((tab, index) => {
                     if (index === (msg.currentVersion || 0)) {
                         tab.classList.add('active');
@@ -2802,7 +3091,7 @@ applyHighlighting(container) {
                 });
             }
 
-            const actions = messageElement.querySelector('.gc-message-actions');
+            const actions = messageElement.querySelector('.nv-message-actions');
             if (actions) {
                 const hideActions = msg.isLoading && msg.regenTargetIndex !== undefined && msg.currentVersion === msg.regenTargetIndex;
                 actions.style.display = hideActions ? 'none' : '';
@@ -2819,16 +3108,16 @@ applyHighlighting(container) {
             this.messages.forEach((msg, messageIndex) => {
                 const isGreeting = this.isDefaultGreeting(msg, messageIndex);
                 const div = document.createElement('div');
-                div.className = `gc-message ${msg.role}`;
+                div.className = `nv-message ${msg.role}`;
 
                 // Add version tabs for assistant messages with multiple versions
                 if (msg.role === 'assistant' && msg.versions && msg.versions.length > 1) {
                     const tabsContainer = document.createElement('div');
-                    tabsContainer.className = 'gc-version-tabs';
+                    tabsContainer.className = 'nv-version-tabs';
 
                     msg.versions.forEach((version, versionIndex) => {
                         const tab = document.createElement('button');
-                        tab.className = 'gc-version-tab';
+                        tab.className = 'nv-version-tab';
                         if (versionIndex === (msg.currentVersion || 0)) {
                             tab.classList.add('active');
                         }
@@ -2844,12 +3133,12 @@ applyHighlighting(container) {
                 }
 
                 const contentDiv = document.createElement('div');
-                contentDiv.className = 'gc-message-content';
+                contentDiv.className = 'nv-message-content';
 
                 // Show inline loading if message is being regenerated
                 if (msg.isLoading) {
                     const loadingDiv = document.createElement('div');
-                    loadingDiv.className = 'gc-inline-loading';
+                    loadingDiv.className = 'nv-inline-loading';
                     loadingDiv.innerHTML = '<div class="dot"></div><div class="dot"></div><div class="dot"></div>';
                     contentDiv.appendChild(loadingDiv);
                 } else {
@@ -2865,29 +3154,42 @@ applyHighlighting(container) {
                 // Add action buttons for assistant messages (only if not loading)
                 if (msg.role === 'assistant' && !isGreeting) {
                     const actions = document.createElement('div');
-                    actions.className = 'gc-message-actions';
+                    actions.className = 'nv-message-actions';
 
-                    if (msg.content.startsWith('<img')) {
+                    if (msg.content.trim().startsWith('<img')) {
                         // Extract image URL from HTML
                         const urlMatch = msg.content.match(/src="([^"]+)"/);
                         if (urlMatch) {
                             const imageUrl = urlMatch[1];
+
+                            // Download Button (Icon Only)
                             const downloadBtn = document.createElement('button');
-                            downloadBtn.className = 'gc-action-btn';
+                            downloadBtn.className = 'nv-action-btn';
                             downloadBtn.title = 'Download Image';
-                            downloadBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg><span>Download</span>`;
+                            downloadBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>`;
                             downloadBtn.onclick = (e) => {
                                 e.stopPropagation();
                                 this.downloadImage(imageUrl, 'NeuraVeil-image.png');
                             };
                             actions.appendChild(downloadBtn);
+
+                            // Copy Image Button (Icon Only)
+                            const copyImgBtn = document.createElement('button');
+                            copyImgBtn.className = 'nv-action-btn';
+                            copyImgBtn.title = 'Copy Image';
+                            copyImgBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>`;
+                            copyImgBtn.onclick = (e) => {
+                                e.stopPropagation();
+                                this.copyImageToClipboard(imageUrl);
+                            };
+                            actions.appendChild(copyImgBtn);
                         }
                     } else {
-                        // Copy button for text
+                        // Copy button for text (Icon Only)
                         const copyBtn = document.createElement('button');
-                        copyBtn.className = 'gc-action-btn';
+                        copyBtn.className = 'nv-action-btn';
                         copyBtn.title = 'Copy';
-                        copyBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg><span>Copy</span>`;
+                        copyBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>`;
                         copyBtn.onclick = (e) => {
                             e.stopPropagation();
                             this.copyToClipboard(msg.content);
@@ -2895,11 +3197,11 @@ applyHighlighting(container) {
                         actions.appendChild(copyBtn);
                     }
 
-                    // Regenerate button for all assistant messages
+                    // Regenerate button (Icon Only)
                     const regenBtn = document.createElement('button');
-                    regenBtn.className = 'gc-action-btn';
+                    regenBtn.className = 'nv-action-btn';
                     regenBtn.title = 'Regenerate';
-                    regenBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0118.8-4.3M22 12.5a10 10 0 01-18.8 4.2"/></svg><span>Regenerate</span>`;
+                    regenBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0118.8-4.3M22 12.5a10 10 0 01-18.8 4.2"/></svg>`;
                     regenBtn.onclick = (e) => {
                         e.stopPropagation();
                         this.regenerateResponse(messageIndex);
@@ -2934,7 +3236,7 @@ applyHighlighting(container) {
 
         async regenerateResponse(messageIndex) {
             // Find the user message before this assistant response
-            if (messageIndex === 0) return; // Can't regenerate first message
+            if (messageIndex === 0) return;
 
             const requestChatId = this.currentChatId;
             const userMessageIndex = this.findPreviousUserMessageIndex(messageIndex);
@@ -2946,8 +3248,8 @@ applyHighlighting(container) {
             if (!currentMessage || currentMessage.role !== 'assistant') return;
 
             // Check if it was an image generation
-            const isImageGen = currentMessage.content.startsWith('<img') ||
-                (currentMessage.versions && currentMessage.versions[0].startsWith('<img'));
+            const isImageGen = currentMessage.content.trim().startsWith('<img') ||
+                (currentMessage.versions && currentMessage.versions[0].trim().startsWith('<img'));
 
             // Initialize versions array if needed
             if (!currentMessage.versions) {
@@ -2965,14 +3267,14 @@ applyHighlighting(container) {
             currentMessage.isLoading = true;
 
             if (requestChatId === this.currentChatId) {
-            // Add new tab to UI without full re-render
-            const messageElements = this.elements.msgContainer.querySelectorAll('.gc-message');
-            const messageElement = messageElements[messageIndex];
-            if (messageElement) {
-                let tabsContainer = messageElement.querySelector('.gc-version-tabs');
+                // Add new tab to UI without full re-render
+                const messageElements = this.elements.msgContainer.querySelectorAll('.nv-message');
+                const messageElement = messageElements[messageIndex];
+                if (messageElement) {
+                    let tabsContainer = messageElement.querySelector('.nv-version-tabs');
                     if (!tabsContainer) {
                         tabsContainer = document.createElement('div');
-                        tabsContainer.className = 'gc-version-tabs';
+                        tabsContainer.className = 'nv-version-tabs';
                         messageElement.insertBefore(tabsContainer, messageElement.firstChild);
                     }
 
@@ -2980,7 +3282,7 @@ applyHighlighting(container) {
                     tabsContainer.innerHTML = '';
                     currentMessage.versions.forEach((version, versionIndex) => {
                         const tab = document.createElement('button');
-                        tab.className = 'gc-version-tab';
+                        tab.className = 'nv-version-tab';
                         if (versionIndex === currentMessage.currentVersion) tab.classList.add('active');
                         tab.textContent = versionIndex + 1;
                         tab.onclick = (e) => {
@@ -3000,9 +3302,19 @@ applyHighlighting(container) {
                 if (isImageGen) {
                     // Regenerate image
                     const encoded = encodeURIComponent(userMessage.content);
-                    const imageUrl = `https://image.pollinations.ai/prompt/${encoded}?nologo=true`;
-                    await new Promise(r => setTimeout(r, 1000));
+                    const isPrivate = this.state.isGhostMode ? '&private=true' : '';
+                    const seed = Math.floor(Math.random() * 100000);
+                    const imageUrl = `https://image.pollinations.ai/prompt/${encoded}?nologo=true${isPrivate}&seed=${seed}`;
+
+                    // Preload via Fetch/Blob
+                    const blobUrl = await this.preloadImage(imageUrl);
+
+                    // Store the original URL in history (not blob: to prevent broken images on reload)
                     newContent = `<img src="${imageUrl}" alt="${userMessage.content}" style="max-width: 100%; border-radius: 8px; margin-top: 4px;">`;
+                    // We rely on browser cache instead of swapping to blob:
+                    // - renderMessages(true) rebuilds the DOM
+                    // - blob URLs would be lost in history
+                    // - original URL is safer for persistence
                 } else {
                     // Regenerate text response
                     const historyBeforeMessage = this.messages.slice(0, userMessageIndex + 1);
@@ -3024,20 +3336,20 @@ applyHighlighting(container) {
                     this.renderMessages(true);
                 }
             } catch (error) {
-                // Remove failed placeholder version
-                currentMessage.versions.splice(targetVersionIndex, 1);
-                const prevIndex = currentMessage.regenPrevIndex ?? 0;
-                currentMessage.currentVersion = prevIndex;
-                currentMessage.content = currentMessage.versions[prevIndex] || '';
+                console.error('NeuraVeil Regenerate Error:', error);
+
+                // Show error in the new version slot instead of appending a new message
+                const errorMsg = 'Error • ' + (error.message || 'Unable to regenerate.');
+                currentMessage.versions[targetVersionIndex] = errorMsg;
+                currentMessage.currentVersion = targetVersionIndex;
+                currentMessage.content = errorMsg;
                 currentMessage.isLoading = false;
+
                 delete currentMessage.regenPrevIndex;
                 delete currentMessage.regenTargetIndex;
-                console.error('NeuraVeil Regenerate Error:', error);
-                this.appendMessageToChat(
-                    requestChatId,
-                    'assistant',
-                    'Erreur • Impossible de régénérer pour le moment. Vérifie ta connexion et réessaie.'
-                );
+
+                this.saveHistory();
+
                 if (requestChatId === this.currentChatId) {
                     this.renderMessages(true);
                 }
@@ -3056,12 +3368,45 @@ applyHighlighting(container) {
 
         copyToClipboard(text) {
             navigator.clipboard.writeText(text).then(() => {
-                // Optional: Show feedback (could add a toast later)
-                console.log('Copied to clipboard');
+                this.showToast('Copied to clipboard');
             }).catch(err => {
                 console.error('Failed to copy:', err);
+                this.showToast('Failed to copy');
             });
         }
+
+        async copyImageToClipboard(imageUrl) {
+            try {
+                // Use DOM image to handle CORS and conversions
+                const img = new Image();
+                img.crossOrigin = 'anonymous';
+                img.src = imageUrl;
+
+                await new Promise((resolve, reject) => {
+                    img.onload = resolve;
+                    img.onerror = () => reject(new Error('Failed to load image for copying'));
+                });
+
+                const canvas = document.createElement('canvas');
+                canvas.width = img.naturalWidth;
+                canvas.height = img.naturalHeight;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0);
+
+                // Convert to PNG blob (universally supported by Clipboard API)
+                const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+
+                if (!blob) throw new Error('Failed to create image blob');
+
+                const item = new ClipboardItem({ 'image/png': blob });
+                await navigator.clipboard.write([item]);
+                this.showToast('Image copied to clipboard');
+            } catch (err) {
+                console.error('Failed to copy image:', err);
+                this.showToast('Failed to copy image');
+            }
+        }
+
 
         async downloadImage(url, filename) {
             try {
@@ -3125,10 +3470,10 @@ applyHighlighting(container) {
             const messageIndex = this.messages.length;
             const isGreeting = this.isDefaultGreeting({ role, content }, messageIndex);
             const div = document.createElement('div');
-            div.className = `gc-message ${role}`;
+            div.className = `nv-message ${role}`;
 
             const contentDiv = document.createElement('div');
-            contentDiv.className = 'gc-message-content';
+            contentDiv.className = 'nv-message-content';
             if (role === 'assistant') {
                 this.applyAssistantContent(contentDiv, content, isHtml);
             } else if (isHtml) {
@@ -3143,29 +3488,42 @@ applyHighlighting(container) {
             // Add action buttons for assistant messages
             if (role === 'assistant' && !isGreeting) {
                 const actions = document.createElement('div');
-                actions.className = 'gc-message-actions';
+                actions.className = 'nv-message-actions';
 
-                if (isHtml && content.startsWith('<img')) {
+                if (isHtml && content.trim().startsWith('<img')) {
                     // Extract image URL from HTML
                     const urlMatch = content.match(/src="([^"]+)"/);
                     if (urlMatch) {
                         const imageUrl = urlMatch[1];
+
+                        // Download Button (Icon Only)
                         const downloadBtn = document.createElement('button');
-                        downloadBtn.className = 'gc-action-btn';
+                        downloadBtn.className = 'nv-action-btn';
                         downloadBtn.title = 'Download Image';
-                        downloadBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg><span>Download</span>`;
+                        downloadBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>`;
                         downloadBtn.onclick = (e) => {
                             e.stopPropagation();
                             this.downloadImage(imageUrl, 'NeuraVeil-image.png');
                         };
                         actions.appendChild(downloadBtn);
+
+                        // Copy Image Button (Icon Only)
+                        const copyImgBtn = document.createElement('button');
+                        copyImgBtn.className = 'nv-action-btn';
+                        copyImgBtn.title = 'Copy Image';
+                        copyImgBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>`;
+                        copyImgBtn.onclick = (e) => {
+                            e.stopPropagation();
+                            this.copyImageToClipboard(imageUrl);
+                        };
+                        actions.appendChild(copyImgBtn);
                     }
                 } else {
-                    // Copy button for text
+                    // Copy button for text (Icon Only)
                     const copyBtn = document.createElement('button');
-                    copyBtn.className = 'gc-action-btn';
+                    copyBtn.className = 'nv-action-btn';
                     copyBtn.title = 'Copy';
-                    copyBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg><span>Copy</span>`;
+                    copyBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>`;
                     copyBtn.onclick = (e) => {
                         e.stopPropagation();
                         this.copyToClipboard(content);
@@ -3173,11 +3531,11 @@ applyHighlighting(container) {
                     actions.appendChild(copyBtn);
                 }
 
-                // Regenerate button for all assistant messages
+                // Regenerate button (Icon Only)
                 const regenBtn = document.createElement('button');
-                regenBtn.className = 'gc-action-btn';
+                regenBtn.className = 'nv-action-btn';
                 regenBtn.title = 'Regenerate';
-                regenBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0118.8-4.3M22 12.5a10 10 0 01-18.8 4.2"/></svg><span>Regenerate</span>`;
+                regenBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0118.8-4.3M22 12.5a10 10 0 01-18.8 4.2"/></svg>`;
                 regenBtn.onclick = (e) => {
                     e.stopPropagation();
                     this.regenerateResponse(messageIndex);
@@ -3207,7 +3565,16 @@ applyHighlighting(container) {
             this.elements.typingIndicator.classList.toggle('visible', shouldShow);
         }
 
+        setLoadingText(text) {
+            if (this.elements.typingText) {
+                this.elements.typingText.textContent = text || '';
+                this.elements.typingText.style.display = text ? 'inline-block' : 'none';
+            }
+        }
+
         setLoading(loading, chatId = this.currentChatId) {
+            if (!loading) this.setLoadingText('');
+
             if (loading) {
                 this.state.isTyping = true;
                 this.state.loadingChatId = chatId;
@@ -3355,7 +3722,7 @@ applyHighlighting(container) {
                 - You may also use Markdown code fences (\\\`\\\`\\\`lang ... \\\`\\\`\\\`). Either fences or [tool:code] is accepted.
                 - Never output raw HTML.
                 - Mix normal text and tool calls as needed.`;
-                        const highModePrompt = `You are in HIGH reasoning mode.
+            const highModePrompt = `You are in HIGH reasoning mode.
 
                 Instructions:
                 - Apply deep, multi-step reasoning internally.
@@ -3365,7 +3732,7 @@ applyHighlighting(container) {
                 - When relevant, structure the output (sections, lists, steps).
                 - Decide whether the response should include images, links, or code; if so, include the appropriate tool calls in the final output.
                 - Only include images (generate_image/show_image) when the user explicitly asks for an image.
-                - You may include a show_image tool call when the user asks what something looks like (e.g., "a quoi ressemble un camion").
+                - You may include a show_image tool call when the user asks what something looks like (e.g., "what does a truck look like").
 
                 Constraints:
                 - Never reveal internal reasoning or analysis.
@@ -3376,7 +3743,7 @@ applyHighlighting(container) {
                 Deliver the most accurate, thoughtful, and well-presented answer possible.
 
                 ${toolSpec}`;
-                        const ultraModePrompt = `You are in ULTRA reasoning mode.
+            const ultraModePrompt = `You are in ULTRA reasoning mode.
 
                 Instructions:
                 - Apply intermediate, multi-step reasoning internally (more thorough than high).
@@ -3387,7 +3754,7 @@ applyHighlighting(container) {
                 - When relevant, structure the output (sections, lists, steps).
                 - Decide whether the response should include images, links, or code; if so, include the appropriate tool calls in the final output.
                 - Only generate images when the user explicitly asks for an image.
-                - Prefer including a show_image tool call for visual or concrete objects when helpful (e.g., "c'est quoi un chien", "a quoi ressemble ..."), even if the user did not explicitly ask for an image.
+                - Prefer including a show_image tool call for visual or concrete objects when helpful (e.g., "what is a dog", "what does it look like..."), even if the user did not explicitly ask for an image.
                 - When you use show_image, prefer a short query (e.g., [tool:show_image query="ford mustang" alt="Ford Mustang"]).
 
                 Constraints:
@@ -3456,6 +3823,124 @@ applyHighlighting(container) {
             cleaned = cleaned.replace(adBlockRegex, '');
             cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
             return cleaned.trim();
+        }
+
+        setupSpeechRecognition() {
+            if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+                if (this.elements.micBtn) this.elements.micBtn.style.display = 'none';
+                return;
+            }
+
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            this.recognition = new SpeechRecognition();
+            this.recognition.continuous = true;
+            this.recognition.interimResults = true;
+            this.recognition.lang = 'fr-FR';
+
+            this.recognition.onresult = (event) => {
+                let finalTranscript = '';
+                let interimTranscript = '';
+
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    if (event.results[i].isFinal) {
+                        finalTranscript += event.results[i][0].transcript;
+                    } else {
+                        interimTranscript += event.results[i][0].transcript;
+                    }
+                }
+
+                const input = this.elements.input;
+
+                // Track where we started inserting text for this session if not already tracked
+                if (typeof this.speechCursorStart === 'undefined' || !this.isRecording) {
+                    this.speechCursorStart = input.selectionStart;
+                    this.speechTextBefore = input.value.substring(0, this.speechCursorStart);
+                    this.speechTextAfter = input.value.substring(input.selectionEnd);
+                }
+
+
+                const prefix = (this.speechTextBefore && !this.speechTextBefore.endsWith(' ') && !(finalTranscript || interimTranscript).startsWith(' ')) ? ' ' : '';
+                // Accumulate only finalized speech results
+
+                if (!this.accumulatedFinal) this.accumulatedFinal = '';
+                this.accumulatedFinal += finalTranscript;
+
+                const displayText = this.accumulatedFinal + interimTranscript;
+
+                input.value = this.speechTextBefore + prefix + displayText + this.speechTextAfter;
+
+                const newPos = this.speechTextBefore.length + prefix.length + displayText.length;
+                input.selectionStart = newPos;
+                input.selectionEnd = newPos;
+                this.adjustHeight();
+            };
+
+            this.recognition.onerror = (event) => {
+                console.error('Speech recognition error', event.error);
+                if (event.error === 'not-allowed') {
+                    this.showToast('Microphone access denied');
+                    this.stopRecording();
+                }
+            };
+
+            this.recognition.onend = () => {
+                if (this.isRecording) {
+                    this.stopRecording();
+                }
+            };
+        }
+
+        toggleSpeech() {
+            if (!this.recognition) return;
+
+            if (this.isRecording) {
+                this.stopRecording();
+            } else {
+                this.startRecording();
+            }
+        }
+
+        startRecording() {
+            try {
+                // Reset speech state variables
+                this.speechCursorStart = undefined;
+                this.speechTextBefore = '';
+                this.speechTextAfter = '';
+                this.accumulatedFinal = '';
+
+                this.recognition.start();
+                this.isRecording = true;
+                this.elements.micBtn.classList.add('active');
+                // Check icon
+                this.elements.micBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+                this.elements.micBtn.style.color = '#22c55e';
+                this.elements.input.placeholder = 'Listening...';
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        stopRecording() {
+            if (this.recognition) {
+                this.recognition.stop();
+            }
+            this.isRecording = false;
+
+            // Clear speech state variables
+            this.speechCursorStart = undefined;
+            this.speechTextBefore = '';
+            this.speechTextAfter = '';
+            this.accumulatedFinal = '';
+
+            // Reset to mic icon
+            if (this.elements.micBtn) {
+                this.elements.micBtn.classList.remove('active');
+                this.elements.micBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>`;
+                this.elements.micBtn.style.color = '';
+            }
+            if (this.elements.input) {
+                this.elements.input.placeholder = this.state.isImageMode ? 'Describe your image...' : 'Type a message...';
+            }
         }
     }
 
