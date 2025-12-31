@@ -1,29 +1,22 @@
-## Introduction
+## Installation
 
-This repository contains **NeuraVeil**, a discreet and powerful AI chat overlay designed to integrate directly into your browser.
-With this script, you can access AI assistance instantly on any website, without creating an account or logging in.
-NeuraVeil focuses on simplicity, speed, and discretion, allowing you to enhance your browsing experience without disrupting your workflow.
+Follow these steps to install **NeuraVeil** from GreasyFork:
 
-To install the NeuraVeil script from GreasyFork, follow these steps:
+1. **Open the GreasyFork page**  
+   Visit the script page on [GreasyFork](https://greasyfork.org/scripts/560252-neuraveil-ai-chat-in-your-browser).
 
-1. **Access GreasyFork**:  
-   Click [here](https://greasyfork.org/fr/scripts/560252-neuraveil-ai-chat-in-your-browser) to open the script page.
+2. **Install Tampermonkey**  
+   This script requires the Tampermonkey userscript manager.  
+   Install it from the [Chrome Web Store](https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo).
 
-2. **Install Tampermonkey**:  
-   - If you haven't installed Tampermonkey yet, go to the
-     [Chrome Web Store](https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo)
-     and click **"Add to Chrome"** to install it.
+3. **Install the script**  
+   - Return to the GreasyFork script page.  
+   - Click the **“Install this script”** button.  
+   - Confirm the installation when prompted by Tampermonkey.
 
-3. **Install the Script**:  
-   - Once Tampermonkey is installed, return to the NeuraVeil GreasyFork page.
-   - Click on the **"Install this script"** button on the script page.
+Once completed, the script is installed and ready to use.
 
-### Usage
+## Usage
 
-Once installed, open any website and launch the NeuraVeil panel to start chatting instantly with the AI overlay.
-
-No account required.  
-No login required.  
-No setup needed.
-
-## **By Dℝ∃wX**
+Open any website.  
+Launch the NeuraVeil panel to start chatting instantly with the AI overlay.
