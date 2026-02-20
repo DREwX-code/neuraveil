@@ -18,6 +18,10 @@ No account.
 
 Just a simple, fast, and clean chat, usable on a daily basis.
 
+> [!WARNING]
+> NeuraVeil AI may generate inaccurate, incomplete, outdated, or misleading information.
+> Always independently verify critical, medical, legal, financial, or academic data before making decisions.
+
 ## What NeuraVeil does
 
 - Adds an AI chat directly on the websites you visit
@@ -122,9 +126,8 @@ Everything works without page reloads.
 - Info icon (i): open the information panel
 - History, new chat, switch to sidebar, close
 
-## Important notes
+## Additional notes
 
-- NeuraVeil is an AI assistant and may generate inaccurate information. Always verify critical or sensitive information independently.
 - Ghost Mode: no data is saved by the script
 - Auto and Ultra modes may automatically suggest relevant images
 - Uses Pollinations.ai, a free, fast, and performant API
@@ -180,8 +183,8 @@ Feedback, bug reports, and improvement suggestions are welcome via [GreasyFork f
 
 ## Author
 
-Developed and maintained by <strong>Dℝ∃wX</strong> (<strong><a href="https://github.com/DREwX-code">DREwX-code</a>).  
-Project designed for simplicity, performance, and user-focused evolution.
+Developed and maintained by <strong>Dℝ∃wX</strong> (<a href="https://github.com/DREwX-code">DREwX-code</a>).  
+Engineered for performance, precision, and continuous evolution.
 
 ## License
 
