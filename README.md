@@ -183,7 +183,7 @@ Feedback, bug reports, and improvement suggestions are welcome via [GreasyFork f
 
 ## Author
 
-Developed and maintained by <strong>Dℝ∃wX</strong> (<a href="https://github.com/DREwX-code">DREwX-code</a>).  
+Developed and maintained by **Dℝ∃wX** (GitHub: [DREwX-code](https://github.com/DREwX-code)).  
 Engineered for performance, precision, and continuous evolution.
 
 ## License
