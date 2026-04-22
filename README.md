@@ -13,9 +13,9 @@
 
 It uses the open (no-signup) APIs of [Pollinations.ai](https://github.com/pollinations/pollinations) for text and image generation, in order to provide immediate access to an AI directly during your browsing.
 
-No need to change pages.  
-No heavy interface.  
-No account.
+No tabs.  
+No accounts.  
+No interruptions.
 
 Just a simple, fast, and clean chat, usable on a daily basis.
 
@@ -30,6 +30,7 @@ Just a simple, fast, and clean chat, usable on a daily basis.
 - Gives control over the depth and style of responses
 - Integrates image generation and image search
 - Offers real privacy when you don’t want to save anything
+- Understands and interacts with the current page content
 
 Everything works without page reloads.
 
@@ -40,14 +41,15 @@ Everything works without page reloads.
 ### Interface
 
 - Discreet floating chat bubble
-- Floating chat icon is draggable (long press + drag), with position saved
-- Clicking the chat icon toggles the chat open or closed
-- Dynamic chat bubble positioning to stay within the viewport
-- Sidebar mode (side panel), movable to the left or right with position saved
-- Resizable sidebar with adjustable width (320–720px), automatically saved
-- Instant open and close
-- Quick close with the Escape key
-- A dedicated Data Management section to reset all locally stored settings and conversations
+- Draggable chat trigger with saved position
+- Click to toggle open and close
+- Smart positioning to stay within the viewport
+- Dockable side panel (left or right) with saved position
+- Resizable side panel with persistent width
+- Collapsible side panel with a compact toolbar mode
+- Fast close with the Escape key
+- Dedicated Data Management section for resetting local data
+
 
 ### Conversations
 
@@ -68,12 +70,14 @@ Everything works without page reloads.
 <details>
   <summary><strong>How reasoning levels work</strong></summary>
 
-  Reasoning levels control how deeply the AI analyzes a request before responding.
+  Reasoning levels mainly affect response depth, speed, tool routing, and how carefully NeuraVeil validates ambiguous requests before answering.
 
-  - <strong>Minimal / Low</strong>: fast, concise answers with minimal analysis  
-  - <strong>Medium</strong>: balanced reasoning and clarity  
-  - <strong>High</strong>: deeper analysis, structured responses, and may generate images when relevant  
-  - <strong>Ultra</strong>: maximum reasoning depth, refined answers, automatic rewriting if the input is unclear, and may generate images when relevant  
+  - <strong>Auto</strong>: automatically chooses the most suitable level for the request  
+  - <strong>Minimal</strong>: shortest and fastest path, with tools used mainly for explicit requests  
+  - <strong>Low</strong>: simple, practical answers with light reasoning  
+  - <strong>Medium</strong>: balanced clarity and detail, with proper tool use for explicit image or music requests  
+  - <strong>High</strong>: more structured answers, stronger intent validation, and more careful tool routing  
+  - <strong>Ultra</strong>: the most cautious mode, better for ambiguous requests and less likely to invent links, sources, or media  
 
   Internal reasoning is never exposed to the user. Only the final response is shown.
 </details>
@@ -102,11 +106,28 @@ Everything works without page reloads.
 
 ### Images
 
-- Image generation via Pollinations.ai
-- Web image search via Openverse, including image source, author, and license information
-- Openverse image actions: copy image, download image, and copy image link
-- Automatic preloading
-- In High and Ultra modes, images may be generated automatically when relevant
+- Supports multiple backends (Pollinations + AI Horde)
+- Web image search via Openverse (with attribution and licensing)
+- Copy, download, and direct link actions
+- Generated image cache preserved across reloads
+- Explicit image requests supported across all reasoning levels
+
+### Page Analysis
+
+- Extracts the main content of the current page
+- Allows follow-up questions based on page context
+- Enables intelligent search within the page
+- Works directly without leaving the current website
+
+Turn any webpage into an interactive knowledge source.
+
+### Music
+
+- Search for royalty-free music directly in chat
+- Built-in audio player
+- Source attribution and download options
+
+Search, play, and download free music without leaving the page.
 
 ### Rendering and usability
 
@@ -127,53 +148,80 @@ Everything works without page reloads.
 - Info icon (i): open the information panel
 - History, new chat, switch to sidebar, close
 
-## Additional notes
+## Compatibility
 
-- Ghost Mode: no data is saved by the script
-- Auto and Ultra modes may automatically suggest relevant images
-- Uses Pollinations.ai, a free, fast, and performant API
-- On websites with strict Content Security Policies (such as GitHub),
-  external Highlight.js theme styles may be blocked by the browser.
-  This does not affect core functionality. A fix is currently being worked on.
+- Improved support for Safari
+- Better handling of strict websites such as GitHub
+- More robust fallback behavior when GM APIs are partially exposed
+- More reliable local storage and startup behavior
+- More robust fallback paths for syntax highlighting, math rendering, and media playback on CSP-restricted sites
 
-## Third-Party Libraries
+## Notes
+
+- Ghost Mode disables all local data storage
+- Explicit image requests are supported across all reasoning levels
+- High and Ultra apply stricter validation for ambiguous or visual requests
+
+## Third-Party Libraries & Dependencies
+
+NeuraVeil relies on carefully selected open-source libraries to power advanced features such as page analysis, rendering, and media integration.
+
+- **DOMPurify**
+  - Sanitizes HTML extracted from active pages before processing.
+  - Source: <https://github.com/cure53/DOMPurify>
+  - License: Apache-2.0 OR MPL-2.0
+
+- **Mozilla Readability**
+  - Extracts the main readable content from the active page for page analysis.
+  - Source: <https://github.com/mozilla/readability>
+  - License: Apache-2.0
+
+- **Turndown**
+  - Converts extracted HTML into clean Markdown before sending it to the AI.
+  - Source: <https://github.com/mixmark-io/turndown>
+  - License: MIT
+
+- **Fuse.js**
+  - Enables fast, typo-tolerant search in page content and conversation history.
+  - Website: <https://fusejs.io/>
+  - Source: <https://github.com/krisk/Fuse>
+  - License: Apache-2.0
 
 - **Highlight.js**
-  - Used for syntax highlighting of code blocks across all supported programming languages.
+  - Provides syntax highlighting for code blocks across all supported programming languages.
   - Website: <https://highlightjs.org/>
-  - Source code: <https://github.com/highlightjs/highlight.js>
+  - Source: <https://github.com/highlightjs/highlight.js>
   - License: BSD 3-Clause
 
 - **KaTeX**
-  - Used for rendering mathematical formulas with proper LaTeX-style formatting.
+  - Renders mathematical formulas with proper LaTeX-style formatting.
   - Website: <https://katex.org/>
-  - Source code: <https://github.com/KaTeX/KaTeX>
+  - Source: <https://github.com/KaTeX/KaTeX>
   - License: MIT
 
-- **Pollinations.ai**  
-  - Used as a public, open API for text and image generation.  
+- **Pollinations.ai**
+  - Provides open, no-signup APIs for text and image generation.
   - Website: <https://pollinations.ai/>
-  - Source code: <https://github.com/pollinations/pollinations>
+  - Source: <https://github.com/pollinations/pollinations>
   - License: MIT
 
-- **AI Horde (Stable Horde)**  
-  - Used as a community-driven image generation backend.  
+- **AI Horde (Stable Horde)**
+  - Provides a community-driven backend for image generation.
   - Website: <https://aihorde.net/>
-  - Source code: <https://github.com/Haidra-Org/AI-Horde> 
+  - Source: <https://github.com/Haidra-Org/AI-Horde>
   - License: AGPL-3.0
 
 - **Openverse**
-  - Used for searching and retrieving openly licensed web images.
-  - Provides attribution, license information, and source links for each image.
+  - Provides access to openly licensed images and audio, with attribution and source links.
   - Website: <https://openverse.org/>
-  - Source code: <https://github.com/WordPress/openverse>
+  - Source: <https://github.com/WordPress/openverse>
   - License: CC0 (API and metadata)
 
 - **GreasyFork SVG Icon**  
-  - Used as an interface icon.  
+  - Provides an interface icon.  
   - Created by denilsonsa.  
   - Source: <https://github.com/denilsonsa/denilsonsa.github.io/blob/master/icons/GreasyFork.svg>
-  - License: Not explicitly declared (used with attribution).
+  - License: Used with attribution (see source repository).
 
 
 ---
