@@ -34,7 +34,7 @@
 // @description:pl  Lekki, nowoczesny pływający panel czatu AI działający na każdej stronie internetowej. Darmowy i bez rejestracji. Wykorzystuje Pollinations.ai do generowania tekstu i obrazów, obsługuje wiele rozmów, poziomy rozumowania, style odpowiedzi, narzędzia graficzne oraz tryb Ghost nastawiony na prywatność.
 // @description:tr  Her web sayfasında çalışan hafif ve modern bir yüzen yapay zeka sohbet paneli. Ücretsiz ve kayıt gerektirmez. Metin ve görsel üretimi için Pollinations.ai kullanır; çoklu sohbetler, akıl yürütme seviyeleri, yanıt stilleri, görsel araçlar ve gizliliğe odaklı Ghost modunu destekler.
 
-// @version      2.0.0
+// @version      2.0.1
 // @author       Dℝ∃wX
 // @match        *://*/*
 // @icon         https://raw.githubusercontent.com/DREwX-code/NeuraVeil/refs/heads/main/assets/icon/Icon_NeuraVeil_Script.png
@@ -341,7 +341,9 @@ Always verify critical or sensitive information independently.
             this.GENERATED_IMAGE_CACHE_MAX_ITEMS = 4;
             this.GENERATED_IMAGE_CACHE_MAX_BYTES = 3 * 1024 * 1024;
             this.GENERATED_IMAGE_CACHE_MAX_ITEM_BYTES = 1200 * 1024;
-            this.PAGE_CONTEXT_MAX_CHARS = 24000;
+            this.PAGE_CONTEXT_MAX_CHARS = 14000;
+            this.PAGE_CONTEXT_PROMPT_MAX_CHARS = 5200;
+            this.PAGE_CONTEXT_MATCH_LIMIT = 5;
             this.PAGE_FALLBACK_MAX_NODES = 320;
             this.DEFAULT_GREETING = 'Hello! I am NeuraVeil. How can I help you today?';
             this.hljsReady = null;
@@ -365,6 +367,10 @@ Always verify critical or sensitive information independently.
             this.POLLINATIONS_TEXT_MODELS_URL = 'https://text.pollinations.ai/models';
             this.POLLINATIONS_IMAGE_MODELS_URL = 'https://image.pollinations.ai/models';
             this.POLLINATIONS_MODEL_CACHE_TTL = 10 * 60 * 1000;
+            this.POLLINATIONS_TEXT_TIMEOUT_MS = 30000;
+            this.POLLINATIONS_TEXT_RETRY_DELAYS = [1500];
+            this.POLLINATIONS_TEXT_COOLDOWN_MS = 12000;
+            this.POLLINATIONS_TIMEOUT_COOLDOWN_MS = 8000;
             this.POLLINATIONS_CHAT_MODERN_URL = 'https://gen.pollinations.ai/v1/chat/completions';
             this.POLLINATIONS_CHAT_LEGACY_URL = 'https://text.pollinations.ai/openai';
             this.host = null;
@@ -411,6 +417,7 @@ Always verify critical or sensitive information independently.
             this.pollinationsModelCatalog = null;
             this.pollinationsModelCatalogPromise = null;
             this.pollinationsModernUnavailable = false;
+            this.pollinationsTextCooldownUntil = 0;
             this.pageDockOriginalStyles = null;
             this.ignoreNextTriggerClick = false;
             this.triggerDragState = null;
@@ -675,18 +682,38 @@ Always verify critical or sensitive information independently.
         }
 
         async postPollinationsChat(endpoint, payload, context, retryCount = 0, requestOptions = {}) {
-            const response = await this.request(endpoint.url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-                signal: requestOptions.signal
-            });
+            if (endpoint?.type === 'legacy' && this.isPollinationsTextCoolingDown()) {
+                throw this.createPollinationsCooldownError(context || endpoint.label);
+            }
 
-            if (response.status === 429 && retryCount < 2) {
-                const delay = 2000 * Math.pow(2, retryCount);
+            let response;
+            try {
+                response = await this.request(endpoint.url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                    signal: requestOptions.signal,
+                    timeout: Number(requestOptions.timeout || 0) > 0 ? Number(requestOptions.timeout) : this.POLLINATIONS_TEXT_TIMEOUT_MS
+                });
+            } catch (error) {
+                if (!this.isAbortError(error) && endpoint?.type === 'legacy' && this.isPollinationsTimeoutError(error)) {
+                    this.setPollinationsTextCooldown(this.POLLINATIONS_TIMEOUT_COOLDOWN_MS);
+                    const timeoutError = new Error(`${context || endpoint.label} : Request timed out. The service is busy. Try again shortly.`);
+                    timeoutError.status = 408;
+                    throw timeoutError;
+                }
+                throw error;
+            }
+
+            if (response.status === 429 && retryCount < this.POLLINATIONS_TEXT_RETRY_DELAYS.length) {
+                const delay = this.POLLINATIONS_TEXT_RETRY_DELAYS[retryCount];
                 console.warn(`NeuraVeil: ${endpoint.label} rate limit, retrying in ${delay}ms...`);
-                await new Promise(r => setTimeout(r, delay));
+                await this.sleep(delay, requestOptions.signal);
                 return this.postPollinationsChat(endpoint, payload, context, retryCount + 1, requestOptions);
+            }
+
+            if (response.status === 429 && endpoint?.type === 'legacy') {
+                this.setPollinationsTextCooldown();
             }
 
             if (!response.ok) {
@@ -953,6 +980,97 @@ Always verify critical or sensitive information independently.
         formatUserFacingError(error, fallback = 'An error occurred.') {
             const message = String(error?.message || '').trim();
             return message || fallback;
+        }
+
+        sleep(ms, signal = null) {
+            return new Promise((resolve, reject) => {
+                let timer = null;
+                const cleanup = () => {
+                    if (timer) clearTimeout(timer);
+                    if (signal) signal.removeEventListener('abort', onAbort);
+                };
+                const onAbort = () => {
+                    cleanup();
+                    const error = new Error('Request aborted');
+                    error.name = 'AbortError';
+                    error.__nvAborted = true;
+                    reject(error);
+                };
+                if (signal?.aborted) {
+                    onAbort();
+                    return;
+                }
+                timer = setTimeout(() => {
+                    cleanup();
+                    resolve();
+                }, Math.max(0, Number(ms) || 0));
+                if (signal) signal.addEventListener('abort', onAbort, { once: true });
+            });
+        }
+
+        getPollinationsTextCooldownRemaining() {
+            return Math.max(0, Number(this.pollinationsTextCooldownUntil || 0) - Date.now());
+        }
+
+        isPollinationsTextCoolingDown() {
+            return this.getPollinationsTextCooldownRemaining() > 0;
+        }
+
+        setPollinationsTextCooldown(ms = this.POLLINATIONS_TEXT_COOLDOWN_MS) {
+            this.pollinationsTextCooldownUntil = Math.max(
+                Number(this.pollinationsTextCooldownUntil || 0),
+                Date.now() + Math.max(0, Number(ms) || 0)
+            );
+        }
+
+        createPollinationsCooldownError(context = 'Text Pollinations') {
+            const seconds = Math.max(1, Math.ceil(this.getPollinationsTextCooldownRemaining() / 1000));
+            const error = new Error(`${context} : Too many requests. Wait ${seconds}s and try again.`);
+            error.status = 429;
+            error.code = 'POLLINATIONS_COOLDOWN';
+            return error;
+        }
+
+        isPollinationsTimeoutError(error) {
+            const message = String(error?.message || '').toLowerCase();
+            return message.includes('request timed out') || message.includes('timed out');
+        }
+
+        estimateAutoReasoningLevel(userText) {
+            const text = String(userText || '').trim();
+            if (!text) return 'medium';
+            const normalized = text.toLowerCase();
+            const words = normalized.split(/\s+/).filter(Boolean);
+            const wordCount = words.length;
+
+            if (this.state.isPageContextActive && this.state.pageContext?.content) {
+                if (wordCount <= 8 && !/\b(why|compare|plan|strategy|debug|analy[sz]e|pourquoi|compar|plan|strat|debug)\b/i.test(normalized)) {
+                    return 'medium';
+                }
+                return 'high';
+            }
+
+            if (this.state.isImageMode || this.musicSearchLooksExplicit(text) || this.detectImageIntent(text, 'medium').action !== 'none') {
+                return 'medium';
+            }
+
+            if (/^\s*(hi|hello|hey|thanks|thank you|ok|okay|salut|bonjour|merci)\b/i.test(normalized)) {
+                return 'low';
+            }
+
+            if (wordCount <= 4) return 'low';
+
+            if (/\b(translate|rewrite|rephrase|fix grammar|correct|summarize|résume|resume|traduis|corrige|reformule|title|format)\b/i.test(normalized)) {
+                return wordCount <= 12 ? 'minimal' : 'low';
+            }
+
+            if (/\b(debug|refactor|compare|tradeoff|trade-off|strategy|plan|architecture|design|analy[sz]e|roadmap|multi-step|step by step|pourquoi|why)\b/i.test(normalized)) {
+                return 'high';
+            }
+
+            if (wordCount >= 40) return 'high';
+            if (wordCount >= 16) return 'medium';
+            return 'low';
         }
 
 
@@ -1353,7 +1471,7 @@ Always verify critical or sensitive information independently.
                     <div class="nv-info-grid">
                         <div class="nv-info-card variant-a">
                             <h4>Version</h4>
-                            <p>2.0.0<br>Last updated: 2026-04-22</p>
+                            <p>2.0.1<br>Last updated: 2026-04-22</p>
                         </div>
 
                         <div class="nv-info-card variant-b">
@@ -2373,43 +2491,73 @@ Always verify critical or sensitive information independently.
             const refs = this.elements.storageUsage;
             if (!refs) return;
             const total = this.TOTAL_STORAGE_BYTES;
-            const conversationKeys = new Set(['NeuraVeil_history', 'NeuraVeil_active_chat_id']);
-            let conversationsBytes = 0;
-            let settingsBytes = 0;
-            const keys = typeof nvListValues === 'function' ? nvListValues() : [];
-            if (keys.length) {
-                keys.forEach((key) => {
-                    const bytes = this.getStorageBytes(nvGetValue(key, ''));
-                    if (conversationKeys.has(key)) {
-                        conversationsBytes += bytes;
-                    } else {
-                        settingsBytes += bytes;
-                    }
-                });
-            } else {
-                conversationsBytes = this.getStorageBytes(nvGetValue('NeuraVeil_history', '')) +
-                    this.getStorageBytes(nvGetValue('NeuraVeil_active_chat_id', ''));
-                settingsBytes = this.getStorageBytes(nvGetValue('NeuraVeil_style', '')) +
-                    this.getStorageBytes(nvGetValue('NeuraVeil_reasoning', '')) +
-                    this.getStorageBytes(nvGetValue('NeuraVeil_pollinations_model_catalog', '')) +
-                    this.getStorageBytes(nvGetValue(this.GENERATED_IMAGE_CACHE_KEY, '')) +
-                    this.getStorageBytes(nvGetValue('NeuraVeil_trigger_pos', '')) +
-                    this.getStorageBytes(nvGetValue('NeuraVeil_sidebar_side', '')) +
-                    this.getStorageBytes(nvGetValue('NeuraVeil_sidebar_width', ''));
-            }
+            const { conversationsBytes, settingsBytes } = this.getStorageUsageTotals();
             const used = Math.min(total, conversationsBytes + settingsBytes);
             const remaining = Math.max(0, total - used);
 
             const focus = this.state.storageFocus || '';
-            const showBytes = focus === 'conversations'
-                ? conversationsBytes
-                : (focus === 'settings' ? settingsBytes : used);
+            const showBytes = this.getStorageUsageDisplayBytes(focus, conversationsBytes, settingsBytes, used);
             const percent = total ? Math.round((showBytes / total) * 100) : 0;
 
             if (refs.used) refs.used.textContent = this.formatBytes(showBytes);
             if (refs.total) refs.total.textContent = `${percent}%`;
             if (refs.remaining) refs.remaining.textContent = `Remaining ${this.formatBytes(remaining)} / ${this.formatBytes(total)}`;
 
+            this.updateStorageUsageDonut(refs, total, focus, conversationsBytes, settingsBytes);
+        }
+
+        getStorageUsageTotals() {
+            const conversationKeys = new Set(['NeuraVeil_history', 'NeuraVeil_active_chat_id']);
+            const keys = typeof nvListValues === 'function' ? nvListValues() : [];
+            if (keys.length) {
+                return this.getEnumeratedStorageUsageTotals(keys, conversationKeys);
+            }
+            return this.getFallbackStorageUsageTotals();
+        }
+
+        getEnumeratedStorageUsageTotals(keys, conversationKeys) {
+            return keys.reduce((totals, key) => {
+                const bytes = this.getStorageBytes(nvGetValue(key, ''));
+                if (conversationKeys.has(key)) {
+                    totals.conversationsBytes += bytes;
+                } else {
+                    totals.settingsBytes += bytes;
+                }
+                return totals;
+            }, { conversationsBytes: 0, settingsBytes: 0 });
+        }
+
+        getFallbackStorageUsageTotals() {
+            const conversationKeys = [
+                'NeuraVeil_history',
+                'NeuraVeil_active_chat_id'
+            ];
+            const settingsKeys = [
+                'NeuraVeil_style',
+                'NeuraVeil_reasoning',
+                'NeuraVeil_pollinations_model_catalog',
+                this.GENERATED_IMAGE_CACHE_KEY,
+                'NeuraVeil_trigger_pos',
+                'NeuraVeil_sidebar_side',
+                'NeuraVeil_sidebar_width'
+            ];
+            return {
+                conversationsBytes: this.getStoredKeysBytes(conversationKeys),
+                settingsBytes: this.getStoredKeysBytes(settingsKeys)
+            };
+        }
+
+        getStoredKeysBytes(keys) {
+            return keys.reduce((total, key) => total + this.getStorageBytes(nvGetValue(key, '')), 0);
+        }
+
+        getStorageUsageDisplayBytes(focus, conversationsBytes, settingsBytes, used) {
+            if (focus === 'conversations') return conversationsBytes;
+            if (focus === 'settings') return settingsBytes;
+            return used;
+        }
+
+        updateStorageUsageDonut(refs, total, focus, conversationsBytes, settingsBytes) {
             const r = 36;
             const circumference = 2 * Math.PI * r;
             const convLen = Math.min(circumference, (conversationsBytes / total) * circumference);
@@ -3022,44 +3170,53 @@ Always verify critical or sensitive information independently.
             const headings = Array.from(root.querySelectorAll('h1,h2,h3,h4,h5,h6,[role="heading"],.mw-heading'));
 
             headings.forEach((heading) => {
-                if (sections.length >= 80) return;
-                if (heading.closest('#ghost-chat-host')) return;
-                if (!this.isVisiblePageNode(heading)) return;
-
                 const headingText = this.normalizeSpace(heading.textContent || '');
-                if (!headingText || headingText.length < 3) return;
-
-                const level = this.getHeadingLevel(heading);
-                const parts = [headingText];
-                let cursor = heading.nextElementSibling;
-                let guard = 0;
-
-                while (cursor && guard < 16 && parts.join(' ').length < 1600) {
-                    guard += 1;
-                    if (cursor.closest?.('#ghost-chat-host')) {
-                        cursor = cursor.nextElementSibling;
-                        continue;
-                    }
-                    const cursorLevel = this.getHeadingLevel(cursor);
-                    if (cursorLevel && cursorLevel <= level) break;
-                    if (this.isVisiblePageNode(cursor)) {
-                        const text = this.normalizeSpace(cursor.textContent || '');
-                        if (text && text.length >= 3 && text.length <= 1200) parts.push(text);
-                        cursor.querySelectorAll?.('img').forEach((img) => {
-                            const imageText = this.extractImageContextText(img);
-                            if (imageText) parts.push(imageText);
-                        });
-                    }
-                    cursor = cursor.nextElementSibling;
-                }
-
-                const sectionText = this.normalizeSpace(parts.join('\n'));
+                if (!this.shouldExtractHeadingSection(heading, headingText, sections.length)) return;
+                const sectionText = this.collectHeadingSectionText(heading, headingText);
                 if (sectionText.length > headingText.length + 12) {
                     sections.push({ heading: headingText, text: sectionText });
                 }
             });
 
             return sections;
+        }
+
+        shouldExtractHeadingSection(heading, headingText, currentCount) {
+            if (currentCount >= 80) return false;
+            if (!heading || heading.closest('#ghost-chat-host')) return false;
+            if (!this.isVisiblePageNode(heading)) return false;
+            return Boolean(headingText && headingText.length >= 3);
+        }
+
+        collectHeadingSectionText(heading, headingText) {
+            const level = this.getHeadingLevel(heading);
+            const parts = [headingText];
+            let cursor = heading.nextElementSibling;
+            let guard = 0;
+
+            while (cursor && guard < 16 && parts.join(' ').length < 1600) {
+                guard += 1;
+                if (cursor.closest?.('#ghost-chat-host')) {
+                    cursor = cursor.nextElementSibling;
+                    continue;
+                }
+                const cursorLevel = this.getHeadingLevel(cursor);
+                if (cursorLevel && cursorLevel <= level) break;
+                this.collectHeadingSectionNodeText(cursor, parts);
+                cursor = cursor.nextElementSibling;
+            }
+
+            return this.normalizeSpace(parts.join('\n'));
+        }
+
+        collectHeadingSectionNodeText(node, parts) {
+            if (!this.isVisiblePageNode(node)) return;
+            const text = this.normalizeSpace(node.textContent || '');
+            if (text && text.length >= 3 && text.length <= 1200) parts.push(text);
+            node.querySelectorAll?.('img').forEach((img) => {
+                const imageText = this.extractImageContextText(img);
+                if (imageText) parts.push(imageText);
+            });
         }
 
         getHeadingLevel(node) {
@@ -3218,14 +3375,16 @@ Always verify critical or sensitive information independently.
             ].filter(Boolean).join('\n');
             const matches = this.searchPageContext(userText, page);
             const relevantMatches = matches.length
-                ? matches.map((match, index) => {
+                ? matches.slice(0, this.PAGE_CONTEXT_MATCH_LIMIT).map((match, index) => {
                     const label = match.label ? ` (${match.label})` : '';
                     const imageUrl = match.imageFullUrl || match.imageUrl || this.extractFirstUrl(match.text || '');
                     const imageLine = imageUrl ? `\nImage URL to use if the user asks to show this image: ${imageUrl}` : '';
-                    return `${index + 1}. [${match.type || 'page'}${label}] ${this.truncateText(match.text, 900)}${imageLine}`;
+                    return `${index + 1}. [${match.type || 'page'}${label}] ${this.truncateText(match.text, 520)}${imageLine}`;
                 }).join('\n\n')
                 : 'No strong local page match was found for the user question.';
             const responseLanguage = this.detectResponseLanguage(userText);
+            const overviewLimit = matches.length ? Math.min(2600, this.PAGE_CONTEXT_PROMPT_MAX_CHARS) : this.PAGE_CONTEXT_PROMPT_MAX_CHARS;
+            const overview = this.truncateText(page.content || '', overviewLimit);
 
             return [
                 'Page context mode is active.',
@@ -3246,8 +3405,8 @@ Always verify critical or sensitive information independently.
                 'Relevant local page matches:',
                 relevantMatches,
                 '',
-                'Extracted page content:',
-                page.content
+                'Compact page overview extract:',
+                overview
             ].join('\n');
         }
 
@@ -3291,6 +3450,16 @@ Always verify critical or sensitive information independently.
 
         shouldUseCustomMusicPlayback() {
             return this.shouldBypassCdnAssetInjection();
+        }
+
+        shouldUseDataUrlImageProxy() {
+            const host = String(location.hostname || '').toLowerCase();
+            return host === 'github.com'
+                || host === 'gist.github.com'
+                || host.endsWith('.github.com')
+                || host === 'developer.mozilla.org'
+                || host === 'mdn.dev'
+                || host.endsWith('.mozilla.org');
         }
 
         injectHighlightCss(cssText) {
@@ -3887,8 +4056,12 @@ Always verify critical or sensitive information independently.
 
                 // Preload image via Fetch to handle rate limits and avoid double-requests
                 this.setLoadingText('NeuraVeil is loading your image...', requestChatId);
-                const preloadedImage = await this.preloadImage(imageUrl, { returnBlob: true, signal: requestOptions.signal });
-                const blobUrl = preloadedImage?.blobUrl || '';
+                const preloadedImage = await this.preloadImage(imageUrl, {
+                    returnBlob: true,
+                    preferDataUrl: this.shouldUseDataUrlImageProxy(),
+                    signal: requestOptions.signal
+                });
+                const displayUrl = preloadedImage?.displayUrl || preloadedImage?.dataUrl || preloadedImage?.blobUrl || '';
                 if (preloadedImage?.blob) {
                     this.cacheGeneratedImage(imageUrl, preloadedImage.blob).catch((error) => {
                         console.warn('NeuraVeil: failed to cache generated image.', error);
@@ -3906,8 +4079,8 @@ Always verify critical or sensitive information independently.
                     if (images.length) {
                         const lastImg = images[images.length - 1];
                         const raw = lastImg.dataset.nvImageRaw || lastImg.getAttribute('src') || '';
-                        if (raw === imageUrl) {
-                            lastImg.src = blobUrl;
+                        if (raw === imageUrl && displayUrl) {
+                            lastImg.src = displayUrl;
                             lastImg.dataset.nvImageProxied = '1';
                         }
                     }
@@ -3932,10 +4105,17 @@ Always verify critical or sensitive information independently.
             }
         }
 
-        async generateHordeImage(prompt, requestOptions = {}) {
-            const apiKey = '0000000000'; // Anonymous key
-            const payload = {
-                prompt: prompt,
+        getHordeHeaders() {
+            return {
+                'Content-Type': 'application/json',
+                'apikey': '0000000000',
+                'Client-Agent': 'NeuraVeil:2.0.1:https://github.com/DREwX-code/NeuraVeil'
+            };
+        }
+
+        buildHordePayload(prompt) {
+            return {
+                prompt,
                 params: {
                     steps: 25,
                     n: 1,
@@ -3948,81 +4128,87 @@ Always verify critical or sensitive information independently.
                 censor_nsfw: true,
                 r2: true
             };
-            const headers = {
-                'Content-Type': 'application/json',
-                'apikey': apiKey,
-                'Client-Agent': 'NeuraVeil:2.0.0:https://github.com/DREwX-code/NeuraVeil'
-            };
+        }
 
-            // 1. Submit Job
-            const submitResponse = await this.request('https://stablehorde.net/api/v2/generate/async', {
+        async submitHordeGeneration(prompt, requestOptions = {}) {
+            const response = await this.request('https://stablehorde.net/api/v2/generate/async', {
                 method: 'POST',
-                headers,
-                body: JSON.stringify(payload),
+                headers: this.getHordeHeaders(),
+                body: JSON.stringify(this.buildHordePayload(prompt)),
                 signal: requestOptions.signal
             });
-
-            if (!submitResponse.ok) {
-                const payload = await this.readApiErrorPayload(submitResponse);
-                throw new Error(payload?.message || payload?.error?.message || `Horde API Error: ${submitResponse.status}`);
+            if (!response.ok) {
+                const payload = await this.readApiErrorPayload(response);
+                throw new Error(payload?.message || payload?.error?.message || `Horde API Error: ${response.status}`);
             }
 
-            const submitData = await submitResponse.json();
-            const id = submitData.id;
+            const data = await response.json();
+            const id = data?.id;
             if (!id) {
-                throw new Error(submitData?.message || 'No Horde job ID returned.');
+                throw new Error(data?.message || 'No Horde job ID returned.');
+            }
+            return id;
+        }
+
+        normalizeHordeImageResult(rawImage) {
+            const value = String(rawImage || '').trim();
+            if (!value) return '';
+            if (/^https?:\/\//i.test(value) || /^data:image\//i.test(value)) {
+                return value;
+            }
+            if (/^[A-Za-z0-9+/=\s]+$/.test(value)) {
+                return `data:image/webp;base64,${value.replace(/\s+/g, '')}`;
+            }
+            return value;
+        }
+
+        async fetchHordeStatusImage(id, requestOptions = {}) {
+            const response = await this.request(`https://stablehorde.net/api/v2/generate/status/${id}`, {
+                headers: this.getHordeHeaders(),
+                signal: requestOptions.signal
+            });
+            if (!response.ok) {
+                const payload = await this.readApiErrorPayload(response);
+                throw new Error(payload?.message || payload?.error?.message || 'Failed to retrieve Horde image');
             }
 
-            // 2. Poll Status
+            const statusData = await response.json();
+            const generation = statusData?.generations?.[0];
+            const image = this.normalizeHordeImageResult(generation?.img);
+            if (image) return image;
+            throw new Error(statusData?.message || 'AI Horde returned no image.');
+        }
+
+        async pollHordeUntilDone(id, requestOptions = {}) {
             let attempts = 0;
             const maxAttempts = 60;
 
             while (attempts < maxAttempts) {
-                await new Promise(r => setTimeout(r, 2000));
-                attempts++;
+                await this.sleep(2000, requestOptions.signal);
+                attempts += 1;
                 this.throwIfChatRequestAborted({ signal: requestOptions.signal });
 
-                const checkResponse = await this.request(`https://stablehorde.net/api/v2/generate/check/${id}`, {
-                    headers,
+                const response = await this.request(`https://stablehorde.net/api/v2/generate/check/${id}`, {
+                    headers: this.getHordeHeaders(),
                     signal: requestOptions.signal
                 });
+                if (!response.ok) continue;
 
-                if (!checkResponse.ok) continue;
-                const checkData = await checkResponse.json();
-
-                if (checkData?.faulted) {
-                    throw new Error(checkData?.message || 'AI Horde could not complete this image.');
+                const data = await response.json();
+                if (data?.faulted) {
+                    throw new Error(data?.message || 'AI Horde could not complete this image.');
                 }
-
-                if (checkData.done) {
-                    // 3. Get Result
-                    const statusResponse = await this.request(`https://stablehorde.net/api/v2/generate/status/${id}`, {
-                        headers,
-                        signal: requestOptions.signal
-                    });
-                    if (!statusResponse.ok) {
-                        const payload = await this.readApiErrorPayload(statusResponse);
-                        throw new Error(payload?.message || payload?.error?.message || 'Failed to retrieve Horde image');
-                    }
-                    const statusData = await statusResponse.json();
-                    const generation = statusData.generations && statusData.generations[0];
-                    // V2 async status endpoint returns:
-                    // { generations: [{ img: "...", ... }] }
-                    // `img` can be a URL or Base64 depending on the worker.
-                    if (generation && generation.img) {
-                        const rawImage = String(generation.img || '').trim();
-                        if (/^https?:\/\//i.test(rawImage) || /^data:image\//i.test(rawImage)) {
-                            return rawImage;
-                        }
-                        if (/^[A-Za-z0-9+/=\s]+$/.test(rawImage)) {
-                            return `data:image/webp;base64,${rawImage.replace(/\s+/g, '')}`;
-                        }
-                        return rawImage;
-                    }
-                    throw new Error(statusData?.message || 'AI Horde returned no image.');
+                if (data?.done) {
+                    return this.fetchHordeStatusImage(id, requestOptions);
                 }
             }
+
             throw new Error('Horde generation timed out');
+        }
+
+        async generateHordeImage(prompt, requestOptions = {}) {
+            const id = await this.submitHordeGeneration(prompt, requestOptions);
+            return await this.pollHordeUntilDone(id, requestOptions);
         }
 
         async preloadImage(url, options = {}) {
@@ -4060,7 +4246,14 @@ Always verify critical or sensitive information independently.
             const blob = await response.blob();
             const blobUrl = URL.createObjectURL(blob);
             if (options.returnBlob) {
-                return { blob, blobUrl };
+                const preferDataUrl = Boolean(options.preferDataUrl);
+                const dataUrl = preferDataUrl ? await this.blobToDataUrl(blob) : '';
+                return {
+                    blob,
+                    blobUrl,
+                    dataUrl,
+                    displayUrl: dataUrl || blobUrl
+                };
             }
             return blobUrl;
         }
@@ -4145,10 +4338,14 @@ Always verify critical or sensitive information independently.
                     this.assignLoadedImageSource(img, url);
                 }
             }, 2200) : null;
-            this.preloadImage(url, isGeneratedPollinations ? { returnBlob: true } : {})
+            this.preloadImage(url, {
+                returnBlob: true,
+                preferDataUrl: this.shouldUseDataUrlImageProxy(),
+                signal: null
+            })
                 .then((result) => {
-                    const blobUrl = result?.blobUrl || result;
-                    this.assignLoadedImageSource(img, blobUrl);
+                    const displayUrl = result?.displayUrl || result?.dataUrl || result?.blobUrl || result;
+                    this.assignLoadedImageSource(img, displayUrl);
                     if (isGeneratedPollinations && result?.blob) {
                         this.cacheGeneratedImage(url, result.blob).catch((error) => {
                             console.warn('NeuraVeil: failed to persist generated image cache.', error);
@@ -4547,46 +4744,58 @@ Always verify critical or sensitive information independently.
             this.updateHeaderTitle();
         }
 
-        async generateTextOnce(prompt) {
-            const model = await this.getPreferredTextModel('fast');
-            const payload = {
-                messages: [
-                    { role: 'system', content: 'You generate short conversation titles.' },
-                    { role: 'user', content: prompt }
-                ],
-                model,
-                temperature: 0.2,
-                max_tokens: 20,
-                seed: Math.floor(Math.random() * 10000)
-            };
+        buildConversationTitleFromMessage(firstUserMessage) {
+            const raw = this.normalizeSpace(String(firstUserMessage || ''));
+            if (!raw) return 'New chat';
 
-            const { data } = await this.requestPollinationsChatWithFallbackModels(payload, 'Title Pollinations', 'minimal');
-            return this.extractAssistantContent(data);
+            let text = raw
+                .replace(/\s+/g, ' ')
+                .replace(/^[`"'“”'‘’\s]+|[`"'“”'‘’\s]+$/g, '')
+                .replace(/^[#>*-]+\s*/g, '')
+                .replace(/^(please|pls|can you|could you|would you|hey|hi|hello)\s+/i, '')
+                .replace(/^(s'il te plait|stp|salut|bonjour|bonsoir)\s+/i, '')
+                .replace(/^(explain|summarize|rewrite|translate|analyze|optimise|optimize|fix|improve|generate|create|find|show|search)\s+/i, '')
+                .replace(/^(explique|résume|resume|traduis|analyse|corrige|ameliore|améliore|genere|génère|cree|crée|trouve|montre|cherche)\s+/i, '')
+                .replace(/[?!.:;,]+$/g, '')
+                .trim();
+
+            if (!text) text = raw;
+
+            const primaryLine = text.split(/\n+/).find(Boolean) || text;
+            const words = primaryLine.split(/\s+/).filter(Boolean).slice(0, 6);
+            const compact = words.join(' ').slice(0, 48).trim();
+            return this.sanitizeConversationTitle(compact || primaryLine || raw, 'New chat');
         }
 
         async generateConversationTitle(firstUserMessage) {
-            const text = String(firstUserMessage || '').trim();
-            if (!text) return 'New chat';
+            return this.buildConversationTitleFromMessage(firstUserMessage);
+        }
 
-            const fallback = text.split(/\s+/).slice(0, 6).join(' ').slice(0, 48);
+        applyAutoConversationTitle(title, chatId = this.currentChatId, force = false) {
+            if (this.state.isGhostMode) return;
+            const cleaned = this.sanitizeConversationTitle(title, '').trim();
+            if (!cleaned) return;
 
-            try {
-                const prompt =
-                    'Generate a short conversation title (3-6 words, max 48 chars). ' +
-                    'Keep the meaning, correct spelling if needed. No quotes, no emojis, no punctuation at the end.\n\n' +
-                    `User message: ${text}\nTitle:`;
+            const target = this.history.find(h => h.id === chatId);
+            const manualTitle = target?.manualTitle || (chatId === this.currentChatId ? this.state.manualTitle : null);
+            if (manualTitle) return;
 
-                const title = await this.generateTextOnce(prompt);
-                const cleaned = String(title || '')
-                    .replace(/["“”]/g, '')
-                    .replace(/[.!?]+$/g, '')
-                    .replace(/\s+/g, ' ')
-                    .trim()
-                    .slice(0, 48);
+            if (target) {
+                if (!force && target.autoTitle) return;
+                target.autoTitle = cleaned;
+                target.title = cleaned;
+                target.timestamp = Date.now();
+            }
 
-                return cleaned || fallback || 'New chat';
-            } catch (e) {
-                return fallback || 'New chat';
+            if (chatId === this.currentChatId) {
+                if (!force && this.state.autoTitle) return;
+                this.state.autoTitle = cleaned;
+                this.saveHistory();
+                this.updateHeaderTitle();
+                if (this.state.isHistoryOpen) this.renderHistoryList();
+            } else if (target) {
+                nvSetValue('NeuraVeil_history', JSON.stringify(this.history));
+                if (this.state.isHistoryOpen) this.renderHistoryList();
             }
         }
 
@@ -4600,37 +4809,17 @@ Always verify critical or sensitive information independently.
             const existingAuto = chat?.autoTitle || (chatId === this.currentChatId ? this.state.autoTitle : null);
             if (manualTitle || existingAuto) return;
 
-            if (!this._titleGenerationInFlight) {
-                this._titleGenerationInFlight = new Set();
+            const messages = chatId === this.currentChatId ? this.messages : (chat?.messages || []);
+            const userCount = messages.filter(m => m?.role === 'user').length;
+            if (userCount <= 1) {
+                return;
             }
-            if (this._titleGenerationInFlight.has(chatId)) return;
-            this._titleGenerationInFlight.add(chatId);
 
-            this.generateConversationTitle(text)
-                .then((title) => {
-                    if (!title) return;
-                    const target = this.history.find(h => h.id === chatId);
-                    if (target && !target.manualTitle && !target.autoTitle) {
-                        target.autoTitle = title;
-                        target.title = title;
-                        target.timestamp = Date.now();
-                    }
-                    if (chatId === this.currentChatId && !this.state.manualTitle) {
-                        this.state.autoTitle = title;
-                        this.saveHistory();
-                        this.updateHeaderTitle();
-                        if (this.state.isHistoryOpen) this.renderHistoryList();
-                    } else if (target) {
-                        nvSetValue('NeuraVeil_history', JSON.stringify(this.history));
-                        if (this.state.isHistoryOpen) this.renderHistoryList();
-                    }
-                })
-                .catch((err) => {
-                    console.warn('Title generation failed:', err);
-                })
-                .finally(() => {
-                    this._titleGenerationInFlight.delete(chatId);
-                });
+            const title = this.buildConversationTitleFromMessage(text);
+            if (!title) return;
+
+            if (/^(new chat|new conversation)$/i.test(title)) return;
+            this.applyAutoConversationTitle(title, chatId, false);
         }
 
         saveHistory() {
@@ -5509,28 +5698,46 @@ Always verify critical or sensitive information independently.
             const wantsWebImage = this.prefersWebImageSearch(userText);
             const isHighTrustLevel = ['medium', 'high', 'ultra'].includes(reasoningLevel);
             const isExplicitLevel = ['minimal', 'low', 'medium', 'high', 'ultra', 'auto'].includes(reasoningLevel);
+            const rules = [
+                {
+                    enabled: isExplicitLevel,
+                    patterns: patterns.explicitGenerate,
+                    action: 'generate_image',
+                    confidence: 'explicit'
+                },
+                {
+                    enabled: isExplicitLevel,
+                    patterns: patterns.explicitImageNoun,
+                    action: wantsWebImage ? 'show_image' : 'generate_image',
+                    confidence: 'explicit'
+                },
+                {
+                    enabled: isExplicitLevel,
+                    patterns: patterns.explicitShow,
+                    action: 'show_image',
+                    confidence: 'explicit'
+                },
+                {
+                    enabled: isHighTrustLevel,
+                    patterns: patterns.visualLook,
+                    action: 'show_image',
+                    confidence: 'clear'
+                },
+                {
+                    enabled: reasoningLevel === 'ultra' && !this.hasAnyPattern(normalized, patterns.explanationBlocker),
+                    patterns: patterns.weakDefinition,
+                    action: 'show_image',
+                    confidence: 'weak'
+                }
+            ];
+            const matchedRule = rules.find((rule) => rule.enabled && this.hasAnyPattern(normalized, rule.patterns));
+            return matchedRule
+                ? this.buildImageIntentResult(matchedRule.action, query, matchedRule.confidence)
+                : { action: 'none', query: '' };
+        }
 
-            if (isExplicitLevel && this.hasAnyPattern(normalized, patterns.explicitGenerate)) {
-                return { action: 'generate_image', query, confidence: 'explicit' };
-            }
-
-            if (isExplicitLevel && this.hasAnyPattern(normalized, patterns.explicitImageNoun)) {
-                return { action: wantsWebImage ? 'show_image' : 'generate_image', query, confidence: 'explicit' };
-            }
-
-            if (isExplicitLevel && this.hasAnyPattern(normalized, patterns.explicitShow)) {
-                return { action: 'show_image', query, confidence: 'explicit' };
-            }
-
-            if (isHighTrustLevel && this.hasAnyPattern(normalized, patterns.visualLook)) {
-                return { action: 'show_image', query, confidence: 'clear' };
-            }
-
-            if (reasoningLevel === 'ultra' && this.hasAnyPattern(normalized, patterns.weakDefinition) && !this.hasAnyPattern(normalized, patterns.explanationBlocker)) {
-                return { action: 'show_image', query, confidence: 'weak' };
-            }
-
-            return { action: 'none', query: '' };
+        buildImageIntentResult(action, query, confidence) {
+            return { action, query, confidence };
         }
 
         shouldAutoShowImage(userText, reasoningLevel, assistantText) {
@@ -5637,6 +5844,9 @@ Always verify critical or sensitive information independently.
         }
 
         async routeImageIntentWithAI(userText) {
+            if (this.isPollinationsTextCoolingDown()) {
+                return { action: 'none', query: '' };
+            }
             const routerSystemPrompt = `You classify whether a browser assistant should add an image tool call.
 
 Return ONLY compact JSON:
@@ -6225,66 +6435,7 @@ Rules:
             this.setMusicReadyState(card, false);
             this.setMusicStatus(card, 'Searching for a free track...', 'info');
             card._nvMusicPromise = (async () => {
-                const result = await this.fetchOpenverseAudio(query);
-                const blob = await this.fetchAudioBlob(result.audioUrl);
-                const blobUrl = URL.createObjectURL(blob);
-                if (audio?.dataset?.nvMusicBlobUrl) {
-                    URL.revokeObjectURL(audio.dataset.nvMusicBlobUrl);
-                }
-                if (audio) {
-                    audio.dataset.nvMusicBlobUrl = blobUrl;
-                    audio.dataset.nvMusicSourceUrl = result.audioUrl;
-                    if (!useCustomPlayer) {
-                        audio.src = blobUrl;
-                    } else {
-                        audio.removeAttribute('src');
-                        audio.load?.();
-                    }
-                }
-                if (useCustomPlayer) {
-                    const context = await this.ensureMusicAudioContext();
-                    const arrayBuffer = await blob.arrayBuffer();
-                    card._nvMusicAudioBuffer = context
-                        ? await context.decodeAudioData(arrayBuffer.slice(0))
-                        : null;
-                    this.updateCustomMusicProgress(card);
-                    this.syncCustomMusicUi(card, false);
-                }
-                card.dataset.nvMusicLoaded = '1';
-
-                const title = card.querySelector('[data-nv-music-title]');
-                if (title) title.textContent = result.title;
-                card.dataset.nvMusicTitle = result.title;
-
-                const promptEl = card.querySelector('[data-nv-music-prompt]');
-                const details = [result.creator, result.source, result.license].filter(Boolean).join(' · ');
-                if (promptEl) promptEl.textContent = details || query;
-
-                const meta = card.querySelector('[data-nv-music-meta]');
-                if (meta) {
-                    const typeText = result.filetype ? result.filetype.toUpperCase() : 'audio';
-                    meta.textContent = `Openverse · ${typeText}`;
-                }
-
-                const sourceLink = card.querySelector('[data-nv-music-source]');
-                if (sourceLink) {
-                    const sourceUrl = result.foreignLandingUrl || result.audioUrl;
-                    sourceLink.href = sourceUrl;
-                    sourceLink.title = 'Open source';
-                    sourceLink.setAttribute('aria-label', 'Open music source');
-                }
-
-                const downloadBtn = card.querySelector('[data-nv-music-download]');
-                if (downloadBtn) {
-                    downloadBtn.dataset.nvMusicDownload = this.buildMusicFilename(result.title, result.audioUrl);
-                }
-
-                const copyBtn = card.querySelector('[data-nv-music-copy]');
-                if (copyBtn) {
-                    copyBtn.dataset.nvMusicCopyUrl = result.foreignLandingUrl || result.audioUrl;
-                }
-                this.setMusicReadyState(card, true);
-                this.setMusicStatus(card, '', 'info');
+                await this.loadMusicCardResult(card, audio, query, useCustomPlayer);
             })();
 
             try {
@@ -6295,6 +6446,84 @@ Rules:
             } finally {
                 card.dataset.nvMusicLoading = '0';
                 card._nvMusicPromise = null;
+            }
+        }
+
+        async loadMusicCardResult(card, audio, query, useCustomPlayer) {
+            const result = await this.fetchOpenverseAudio(query);
+            const blob = await this.fetchAudioBlob(result.audioUrl);
+            const blobUrl = URL.createObjectURL(blob);
+            this.attachMusicBlobToElement(audio, blobUrl, result.audioUrl, useCustomPlayer);
+            if (useCustomPlayer) {
+                await this.prepareCustomMusicBuffer(card, blob);
+            }
+            this.applyMusicCardMetadata(card, query, result);
+            this.setMusicReadyState(card, true);
+            this.setMusicStatus(card, '', 'info');
+        }
+
+        attachMusicBlobToElement(audio, blobUrl, sourceUrl, useCustomPlayer) {
+            if (audio?.dataset?.nvMusicBlobUrl) {
+                URL.revokeObjectURL(audio.dataset.nvMusicBlobUrl);
+            }
+            if (!audio) return;
+            audio.dataset.nvMusicBlobUrl = blobUrl;
+            audio.dataset.nvMusicSourceUrl = sourceUrl;
+            if (!useCustomPlayer) {
+                audio.src = blobUrl;
+                return;
+            }
+            audio.removeAttribute('src');
+            audio.load?.();
+        }
+
+        async prepareCustomMusicBuffer(card, blob) {
+            const context = await this.ensureMusicAudioContext();
+            const arrayBuffer = await blob.arrayBuffer();
+            card._nvMusicAudioBuffer = context
+                ? await context.decodeAudioData(arrayBuffer.slice(0))
+                : null;
+            this.updateCustomMusicProgress(card);
+            this.syncCustomMusicUi(card, false);
+        }
+
+        applyMusicCardMetadata(card, query, result) {
+            card.dataset.nvMusicLoaded = '1';
+            card.dataset.nvMusicTitle = result.title;
+
+            const title = card.querySelector('[data-nv-music-title]');
+            if (title) title.textContent = result.title;
+
+            const promptEl = card.querySelector('[data-nv-music-prompt]');
+            const details = [result.creator, result.source, result.license].filter(Boolean).join(' · ');
+            if (promptEl) promptEl.textContent = details || query;
+
+            const meta = card.querySelector('[data-nv-music-meta]');
+            if (meta) {
+                const typeText = result.filetype ? result.filetype.toUpperCase() : 'audio';
+                meta.textContent = `Openverse · ${typeText}`;
+            }
+
+            this.applyMusicCardActions(card, result);
+        }
+
+        applyMusicCardActions(card, result) {
+            const sourceUrl = result.foreignLandingUrl || result.audioUrl;
+            const sourceLink = card.querySelector('[data-nv-music-source]');
+            if (sourceLink) {
+                sourceLink.href = sourceUrl;
+                sourceLink.title = 'Open source';
+                sourceLink.setAttribute('aria-label', 'Open music source');
+            }
+
+            const downloadBtn = card.querySelector('[data-nv-music-download]');
+            if (downloadBtn) {
+                downloadBtn.dataset.nvMusicDownload = this.buildMusicFilename(result.title, result.audioUrl);
+            }
+
+            const copyBtn = card.querySelector('[data-nv-music-copy]');
+            if (copyBtn) {
+                copyBtn.dataset.nvMusicCopyUrl = sourceUrl;
             }
         }
 
@@ -6983,206 +7212,236 @@ Rules:
 
         renderMarkdownBlocks(text) {
             const lines = String(text || '').split('\n');
-            let html = '';
-            let hasMarkup = false;
-            let listType = null;
-            let paragraphLines = [];
-            let quoteLines = [];
-
-            const flushParagraph = () => {
-                if (!paragraphLines.length) return;
-                const blockText = paragraphLines.join('\n');
-                const rendered = this.renderInlineMarkdown(blockText);
-                html += `<p class="nv-md-p">${rendered.html}</p>`;
-                hasMarkup = true;
-                paragraphLines = [];
-            };
-
-            const flushList = () => {
-                if (!listType) return;
-                html += `</${listType}>`;
-                listType = null;
-            };
-
-            const flushQuote = () => {
-                if (!quoteLines.length) return;
-                const blockText = quoteLines.join('\n');
-                const rendered = this.renderInlineMarkdown(blockText);
-                html += `<blockquote class="nv-md-quote">${rendered.html}</blockquote>`;
-                hasMarkup = true;
-                quoteLines = [];
-            };
+            const state = this.createMarkdownBlockState();
 
             for (let i = 0; i < lines.length; i += 1) {
                 const line = lines[i];
                 const trimmed = line.trim();
 
                 if (!trimmed) {
-                    flushParagraph();
-                    flushQuote();
-                    flushList();
+                    this.flushMarkdownParagraph(state);
+                    this.flushMarkdownQuote(state);
+                    this.flushMarkdownList(state);
                     continue;
                 }
 
-                const abbrTags = this.extractAbbrTags(line);
-                if (abbrTags) {
-                    const nextTags = this.extractAbbrTags(lines[i + 1] || '');
-                    if (abbrTags.length >= 2 || nextTags) {
-                        flushParagraph();
-                        flushQuote();
-                        flushList();
-                        let collected = abbrTags.slice();
-                        let j = i + 1;
-                        while (j < lines.length) {
-                            const moreTags = this.extractAbbrTags(lines[j]);
-                            if (!moreTags) break;
-                            collected = collected.concat(moreTags);
-                            j += 1;
-                        }
-                        html += this.renderAbbrList(collected);
-                        hasMarkup = true;
-                        i = j - 1;
-                        continue;
-                    }
-                }
-
-                const nextLine = lines[i + 1] || '';
-                if (this.isTabRowLine(line)) {
-                    flushParagraph();
-                    flushQuote();
-                    flushList();
-
-                    const headerCells = this.parseTabRow(line);
-                    const bodyRows = [];
-                    while (i + 1 < lines.length && this.isTabRowLine(lines[i + 1])) {
-                        bodyRows.push(this.parseTabRow(lines[i + 1]));
-                        i += 1;
-                    }
-                    html += this.renderTableFromRows(headerCells, bodyRows);
-                    hasMarkup = true;
-                    continue;
-                }
-
-                if (this.isTableRowLine(line) && this.isTableSeparatorLine(nextLine)) {
-                    flushParagraph();
-                    flushQuote();
-                    flushList();
-
-                    const headerCells = this.parseTableRow(line);
-                    i += 1;
-                    const bodyRows = [];
-                    let rowIndex = i + 1;
-                    while (rowIndex < lines.length && lines[rowIndex].trim()) {
-                        if (!this.isTableRowLine(lines[rowIndex])) break;
-                        let rowText = lines[rowIndex];
-                        let inFence = this.countFenceMarkers(rowText) % 2 === 1;
-                        while (inFence && rowIndex + 1 < lines.length) {
-                            rowIndex += 1;
-                            rowText += `\n${lines[rowIndex]}`;
-                            if (this.countFenceMarkers(lines[rowIndex]) % 2 === 1) {
-                                inFence = !inFence;
-                            }
-                        }
-                        bodyRows.push(this.parseTableRow(rowText));
-                        rowIndex += 1;
-                    }
-                    i = rowIndex - 1;
-                    html += this.renderTableFromRows(headerCells, bodyRows);
-                    hasMarkup = true;
-                    continue;
-                }
-
-                const mathStartMatch = trimmed.match(/^\\\[(.*)$/);
-                if (mathStartMatch) {
-                    flushParagraph();
-                    flushQuote();
-                    flushList();
-                    let mathContent = (mathStartMatch[1] || '').trim();
-                    let closed = false;
-                    if (mathContent.includes('\\]')) {
-                        const endIndex = mathContent.indexOf('\\]');
-                        mathContent = mathContent.slice(0, endIndex);
-                        closed = true;
-                    }
-                    while (!closed && i + 1 < lines.length) {
-                        i += 1;
-                        const nextMathLine = lines[i];
-                        const endIndex = nextMathLine.indexOf('\\]');
-                        if (endIndex !== -1) {
-                            mathContent += (mathContent ? '\n' : '') + nextMathLine.slice(0, endIndex);
-                            closed = true;
-                            break;
-                        }
-                        mathContent += (mathContent ? '\n' : '') + nextMathLine;
-                    }
-                    const mathBlock = this.normalizeMathText(`\\[${mathContent}\\]`);
-                    html += `<div class="nv-md-math">${this.escapeHtml(mathBlock)}</div>`;
-                    hasMarkup = true;
+                const consumedIndex = this.consumeMarkdownBlock(lines, i, state);
+                if (consumedIndex !== null) {
+                    i = consumedIndex;
                     continue;
                 }
 
                 const hrMatch = /^(?:-{3,}|\*{3,}|_{3,})$/.test(trimmed);
                 if (hrMatch) {
-                    flushParagraph();
-                    flushQuote();
-                    flushList();
-                    html += '<hr class="nv-md-hr">';
-                    hasMarkup = true;
+                    this.flushMarkdownOpenBlocks(state);
+                    state.html += '<hr class="nv-md-hr">';
+                    state.hasMarkup = true;
                     continue;
                 }
 
                 const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
                 if (headingMatch) {
-                    flushParagraph();
-                    flushQuote();
-                    flushList();
+                    this.flushMarkdownOpenBlocks(state);
                     const level = headingMatch[1].length;
                     const rendered = this.renderInlineMarkdown(headingMatch[2] || '');
-                    html += `<div class="nv-md-h${level}">${rendered.html}</div>`;
-                    hasMarkup = true;
+                    state.html += `<div class="nv-md-h${level}">${rendered.html}</div>`;
+                    state.hasMarkup = true;
                     continue;
                 }
 
                 const quoteMatch = line.match(/^\s*>\s?(.*)$/);
                 if (quoteMatch) {
-                    flushParagraph();
-                    flushList();
-                    quoteLines.push(quoteMatch[1] || '');
+                    this.flushMarkdownParagraph(state);
+                    this.flushMarkdownList(state);
+                    state.quoteLines.push(quoteMatch[1] || '');
                     continue;
                 }
 
-                if (quoteLines.length) {
-                    flushQuote();
+                if (state.quoteLines.length) {
+                    this.flushMarkdownQuote(state);
                 }
 
                 const unorderedMatch = line.match(/^\s*[-*+]\s+(.*)$/);
                 const orderedMatch = line.match(/^\s*\d+[.)]\s+(.*)$/);
                 if (unorderedMatch || orderedMatch) {
-                    flushParagraph();
+                    this.flushMarkdownParagraph(state);
                     const nextType = unorderedMatch ? 'ul' : 'ol';
-                    if (listType && listType !== nextType) {
-                        flushList();
+                    if (state.listType && state.listType !== nextType) {
+                        this.flushMarkdownList(state);
                     }
-                    if (!listType) {
-                        listType = nextType;
-                        html += `<${listType} class="nv-md-list">`;
-                        hasMarkup = true;
+                    if (!state.listType) {
+                        state.listType = nextType;
+                        state.html += `<${state.listType} class="nv-md-list">`;
+                        state.hasMarkup = true;
                     }
                     const itemText = unorderedMatch ? unorderedMatch[1] : orderedMatch[1];
                     const rendered = this.renderInlineMarkdown(itemText || '');
-                    html += `<li>${rendered.html}</li>`;
-                    hasMarkup = true;
+                    state.html += `<li>${rendered.html}</li>`;
+                    state.hasMarkup = true;
                     continue;
                 }
 
-                paragraphLines.push(line);
+                state.paragraphLines.push(line);
             }
 
-            flushParagraph();
-            flushQuote();
-            flushList();
+            this.flushMarkdownParagraph(state);
+            this.flushMarkdownQuote(state);
+            this.flushMarkdownList(state);
 
-            return { html, hasMarkup };
+            return { html: state.html, hasMarkup: state.hasMarkup };
+        }
+
+        createMarkdownBlockState() {
+            return {
+                html: '',
+                hasMarkup: false,
+                listType: null,
+                paragraphLines: [],
+                quoteLines: []
+            };
+        }
+
+        flushMarkdownParagraph(state) {
+            if (!state.paragraphLines.length) return;
+            const blockText = state.paragraphLines.join('\n');
+            const rendered = this.renderInlineMarkdown(blockText);
+            state.html += `<p class="nv-md-p">${rendered.html}</p>`;
+            state.hasMarkup = true;
+            state.paragraphLines = [];
+        }
+
+        flushMarkdownList(state) {
+            if (!state.listType) return;
+            state.html += `</${state.listType}>`;
+            state.listType = null;
+        }
+
+        flushMarkdownQuote(state) {
+            if (!state.quoteLines.length) return;
+            const blockText = state.quoteLines.join('\n');
+            const rendered = this.renderInlineMarkdown(blockText);
+            state.html += `<blockquote class="nv-md-quote">${rendered.html}</blockquote>`;
+            state.hasMarkup = true;
+            state.quoteLines = [];
+        }
+
+        flushMarkdownOpenBlocks(state) {
+            this.flushMarkdownParagraph(state);
+            this.flushMarkdownQuote(state);
+            this.flushMarkdownList(state);
+        }
+
+        consumeMarkdownBlock(lines, index, state) {
+            return this.consumeMarkdownAbbrBlock(lines, index, state)
+                ?? this.consumeMarkdownTabTable(lines, index, state)
+                ?? this.consumeMarkdownPipeTable(lines, index, state)
+                ?? this.consumeMarkdownMathBlock(lines, index, state);
+        }
+
+        consumeMarkdownAbbrBlock(lines, index, state) {
+            const abbrTags = this.extractAbbrTags(lines[index]);
+            if (!abbrTags) return null;
+            const nextTags = this.extractAbbrTags(lines[index + 1] || '');
+            if (abbrTags.length < 2 && !nextTags) return null;
+
+            this.flushMarkdownOpenBlocks(state);
+            let collected = abbrTags.slice();
+            let nextIndex = index + 1;
+            while (nextIndex < lines.length) {
+                const moreTags = this.extractAbbrTags(lines[nextIndex]);
+                if (!moreTags) break;
+                collected = collected.concat(moreTags);
+                nextIndex += 1;
+            }
+            state.html += this.renderAbbrList(collected);
+            state.hasMarkup = true;
+            return nextIndex - 1;
+        }
+
+        consumeMarkdownTabTable(lines, index, state) {
+            const line = lines[index];
+            if (!this.isTabRowLine(line)) return null;
+
+            this.flushMarkdownOpenBlocks(state);
+            const headerCells = this.parseTabRow(line);
+            const bodyRows = [];
+            let nextIndex = index;
+            while (nextIndex + 1 < lines.length && this.isTabRowLine(lines[nextIndex + 1])) {
+                bodyRows.push(this.parseTabRow(lines[nextIndex + 1]));
+                nextIndex += 1;
+            }
+            state.html += this.renderTableFromRows(headerCells, bodyRows);
+            state.hasMarkup = true;
+            return nextIndex;
+        }
+
+        consumeMarkdownPipeTable(lines, index, state) {
+            const line = lines[index];
+            const nextLine = lines[index + 1] || '';
+            if (!this.isTableRowLine(line) || !this.isTableSeparatorLine(nextLine)) return null;
+
+            this.flushMarkdownOpenBlocks(state);
+            const headerCells = this.parseTableRow(line);
+            const { bodyRows, nextIndex } = this.collectMarkdownPipeTableRows(lines, index + 2);
+            state.html += this.renderTableFromRows(headerCells, bodyRows);
+            state.hasMarkup = true;
+            return nextIndex - 1;
+        }
+
+        collectMarkdownPipeTableRows(lines, startIndex) {
+            const bodyRows = [];
+            let rowIndex = startIndex;
+            while (rowIndex < lines.length && lines[rowIndex].trim()) {
+                if (!this.isTableRowLine(lines[rowIndex])) break;
+                let rowText = lines[rowIndex];
+                let inFence = this.countFenceMarkers(rowText) % 2 === 1;
+                while (inFence && rowIndex + 1 < lines.length) {
+                    rowIndex += 1;
+                    rowText += `\n${lines[rowIndex]}`;
+                    if (this.countFenceMarkers(lines[rowIndex]) % 2 === 1) {
+                        inFence = !inFence;
+                    }
+                }
+                bodyRows.push(this.parseTableRow(rowText));
+                rowIndex += 1;
+            }
+            return { bodyRows, nextIndex: rowIndex };
+        }
+
+        consumeMarkdownMathBlock(lines, index, state) {
+            const trimmed = String(lines[index] || '').trim();
+            const mathStartMatch = trimmed.match(/^\\\[(.*)$/);
+            if (!mathStartMatch) return null;
+
+            this.flushMarkdownOpenBlocks(state);
+            const { mathContent, nextIndex } = this.collectMarkdownMathBlock(lines, index, mathStartMatch[1] || '');
+            const mathBlock = this.normalizeMathText(`\\[${mathContent}\\]`);
+            state.html += `<div class="nv-md-math">${this.escapeHtml(mathBlock)}</div>`;
+            state.hasMarkup = true;
+            return nextIndex;
+        }
+
+        collectMarkdownMathBlock(lines, startIndex, initialContent) {
+            let mathContent = String(initialContent || '').trim();
+            let nextIndex = startIndex;
+            let closed = false;
+            if (mathContent.includes('\\]')) {
+                const endIndex = mathContent.indexOf('\\]');
+                mathContent = mathContent.slice(0, endIndex);
+                closed = true;
+            }
+            while (!closed && nextIndex + 1 < lines.length) {
+                nextIndex += 1;
+                const nextMathLine = lines[nextIndex];
+                const endIndex = nextMathLine.indexOf('\\]');
+                if (endIndex !== -1) {
+                    mathContent += (mathContent ? '\n' : '') + nextMathLine.slice(0, endIndex);
+                    closed = true;
+                    break;
+                }
+                mathContent += (mathContent ? '\n' : '') + nextMathLine;
+            }
+            return { mathContent, nextIndex };
         }
 
         renderTextWithFormatting(text) {
@@ -7370,13 +7629,7 @@ Rules:
             if (directUrl) return null;
 
             const query = this.normalizeImageQuery(rawQuery || 'image');
-            let matches = this.searchPageContext(query, this.state.pageContext)
-                .filter(match => match.type === 'image' || match.imageUrl || match.imageFullUrl || /Image URL:/i.test(match.text || ''));
-            if (!matches.length && this.pageQuestionWantsImage(query)) {
-                matches = (this.state.pageContext.blocks || [])
-                    .filter(match => match.type === 'image' || match.imageUrl || match.imageFullUrl || /Image URL:/i.test(match.text || ''))
-                    .slice(0, 3);
-            }
+            const matches = this.findPageImageMatches(query);
             const match = matches[0];
             if (!match) return null;
 
@@ -7388,6 +7641,20 @@ Rules:
             const pageUrl = this.state.pageContext.url || '';
             const caption = this.escapeHtml(this.truncateText(match.text || alt, 220));
             return this.renderWebImageTool(imageUrl, alt, 'Page Image : ', source, pageUrl, caption, imageUrl);
+        }
+
+        findPageImageMatches(query) {
+            const pageContext = this.state.pageContext;
+            if (!pageContext) return [];
+            let matches = this.searchPageContext(query, pageContext).filter((match) => this.isPageImageMatch(match));
+            if (!matches.length && this.pageQuestionWantsImage(query)) {
+                matches = (pageContext.blocks || []).filter((match) => this.isPageImageMatch(match)).slice(0, 3);
+            }
+            return matches;
+        }
+
+        isPageImageMatch(match) {
+            return Boolean(match && (match.type === 'image' || match.imageUrl || match.imageFullUrl || /Image URL:/i.test(match.text || '')));
         }
 
         tryRenderFromQuery(attrs) {
@@ -7962,7 +8229,11 @@ Rules:
             const imageUrl = this.buildPollinationsImageUrl(userMessage.content);
 
             // Preload via Fetch/Blob and keep a persistent local cache for reloads
-            const preloadedImage = await this.preloadImage(imageUrl, { returnBlob: true, signal: requestOptions.signal });
+            const preloadedImage = await this.preloadImage(imageUrl, {
+                returnBlob: true,
+                preferDataUrl: this.shouldUseDataUrlImageProxy(),
+                signal: requestOptions.signal
+            });
             if (preloadedImage?.blob) {
                 this.cacheGeneratedImage(imageUrl, preloadedImage.blob).catch((error) => {
                     console.warn('NeuraVeil: failed to cache regenerated image.', error);
@@ -8231,10 +8502,7 @@ Rules:
 
             chat.messages.push({ role, content });
             if (role === 'user' && !chat.manualTitle && !chat.autoTitle) {
-                const userCount = chat.messages.filter(m => m.role === 'user').length;
-                if (userCount === 1) {
-                    this.maybeGenerateConversationTitle(chatId, content);
-                }
+                this.maybeGenerateConversationTitle(chatId, content);
             }
             chat.title = chat.manualTitle || chat.autoTitle || chat.title || 'New Conversation';
             chat.timestamp = Date.now();
@@ -8304,7 +8572,7 @@ Rules:
             this.saveHistory();
             this.updateHeaderTitle();
 
-            if (isFirstUserMessage) {
+            if (role === 'user') {
                 this.maybeGenerateConversationTitle(this.currentChatId, content);
             }
 
@@ -8448,6 +8716,7 @@ Rules:
             this.stopRecordingBeforeSubmit();
             const text = this.elements.input.value.trim();
             if (!text || this.isChatLoading(this.currentChatId)) return;
+            const isFirstUserMessage = !this.hasUserMessages(this.messages);
 
             // Check if image mode is active
             if (this.state.isImageMode) {
@@ -8461,7 +8730,11 @@ Rules:
                     this.appendMessageToChat(requestChatId, 'assistant', 'Interrupted.');
                 }
             });
-            const requestOptions = { signal: requestSession.signal };
+            const requestOptions = {
+                signal: requestSession.signal,
+                chatId: requestChatId,
+                includeInlineTitle: Boolean(isFirstUserMessage && !this.state.manualTitle && !this.state.autoTitle)
+            };
             this.elements.input.value = '';
             this.autoResizeInput();
             this.clearTrailingErrorMessage();
@@ -8527,63 +8800,7 @@ Rules:
         }
 
         async fetchAutoReasoningLevel(userText, requestOptions = {}) {
-            const routerSystemPrompt = `You are an internal router.
-
-                Task:
-                Given the user prompt, choose the most appropriate reasoning level.
-
-                Rules:
-                - Respond with compact JSON only.
-                - No explanation.
-                - No extra text.
-
-                Schema:
-                {"level":"minimal|low|medium|high"}
-
-                Allowed levels:
-                minimal
-                low
-                medium
-                high
-
-                Criteria:
-                - minimal: extraction, formatting, very short tasks
-                - low: simple questions, factual answers
-                - medium: general tasks, summaries, explanations
-                - high: complex reasoning, planning, strategy, multi-step tasks`;
-
-            const model = await this.getPreferredTextModel('fast', requestOptions);
-            const payload = {
-                messages: [
-                    { role: 'system', content: routerSystemPrompt },
-                    { role: 'user', content: `User prompt:\n"${userText}"` }
-                ],
-                model,
-                temperature: 0,
-                max_tokens: 20,
-                jsonMode: true,
-                response_format: { type: 'json_object' },
-                seed: Math.floor(Math.random() * 10000)
-            };
-
-            const makeRequest = async (retryCount = 0) => {
-                try {
-                    const { data } = await this.requestPollinationsChatWithFallbackModels(payload, 'Reasoning router', 'minimal', null, requestOptions);
-                    const parsed = this.parseAssistantJsonContent(data);
-                    const raw = String(parsed?.level || this.extractAssistantContent(data)).trim().toLowerCase();
-                    const normalized = raw.split(/\s+/)[0].replace(/[^a-z]/g, '');
-                    const allowed = ['minimal', 'low', 'medium', 'high'];
-                    if (allowed.includes(normalized)) {
-                        return normalized;
-                    }
-                    return 'medium';
-                } catch (e) {
-                    console.warn('NeuraVeil: Router failed, defaulting to medium.', e);
-                    return 'medium';
-                }
-            };
-
-            return await makeRequest();
+            return this.estimateAutoReasoningLevel(userText);
         }
 
         async fetchAIResponse(userText, historyOverride = null, reasoningOverride = null, requestOptions = {}, onStage = null) {
@@ -8638,7 +8855,16 @@ Global constraints:
 - Do not mention intermediate steps.
 - Answer the user's request directly and accurately.
 - If the request is unclear, ask one short clarification question or make the safest reasonable assumption.`;
-            const systemPrompt = baseSystemPrompt;
+            const inlineTitlePrompt = requestOptions.includeInlineTitle
+                ? `\n\nConversation title instruction:
+- This is the first assistant reply of a new conversation.
+- End the response with exactly one hidden metadata line in this format:
+[[NV_TITLE: short conversation title]]
+- The title must be 3-6 words, in the user's language, plain text, with no quotes, no emoji, and no ending punctuation.
+- The normal reply must come first for the user, and the metadata line must come last on its own line.
+- Do not mention the metadata line.`
+                : '';
+            const systemPrompt = `${baseSystemPrompt}${inlineTitlePrompt}`;
 
             const payload = {
                 messages: [
@@ -8657,8 +8883,14 @@ Global constraints:
                 }
                 const { data } = await this.requestPollinationsChatWithFallbackModels(payload, 'Text Pollinations', reasoningLevel, null, requestOptions);
                 const content = this.extractAssistantContent(data) || 'No response.';
+                const inlineTitleData = requestOptions.includeInlineTitle
+                    ? this.extractInlineConversationTitle(content)
+                    : { title: '', content };
+                if (inlineTitleData?.title) {
+                    this.applyAutoConversationTitle(inlineTitleData.title, requestOptions.chatId || this.currentChatId, true);
+                }
                 if (typeof onStage === 'function') onStage('NeuraVeil is polishing the answer...');
-                let cleaned = this.sanitizeAssistantText(content);
+                let cleaned = this.sanitizeAssistantText(inlineTitleData?.content || content);
                 cleaned = this.correctImageToolForWebRequests(userText, cleaned);
                 if (this.musicSearchLooksExplicit(userText)) {
                     if (typeof onStage === 'function') onStage('NeuraVeil is preparing the music result...');
@@ -8677,6 +8909,8 @@ Global constraints:
         sanitizeAssistantText(text) {
             if (!text) return text;
             let cleaned = text;
+            cleaned = cleaned.replace(/\n?\s*\[\[\s*NV_TITLE\s*:\s*([^\]]*?)\s*\]\]\s*$/i, '');
+            cleaned = cleaned.replace(/^\s*\[\[\s*NV_TITLE\s*:\s*([^\]]*?)\s*\]\]\s*\n?/i, '');
             cleaned = cleaned.replace(/\[(searchmusic|search_music|generatemusic|generate_music)\]\s*([^\[]*?)\s*\[\/\1\]/gi, (_match, name, attrs) => {
                 const toolName = /generate/i.test(name) ? 'generate_music' : 'search_music';
                 return `[tool:${toolName} ${String(attrs || '').trim()}]`;
@@ -8685,6 +8919,17 @@ Global constraints:
             cleaned = cleaned.replace(adBlockRegex, '');
             cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
             return cleaned.trim();
+        }
+
+        extractInlineConversationTitle(text) {
+            const source = String(text || '');
+            const match = source.match(/\[\[\s*NV_TITLE\s*:\s*([^\]]*?)\s*\]\]\s*$/i)
+                || source.match(/^\s*\[\[\s*NV_TITLE\s*:\s*([^\]]*?)\s*\]\]\s*\n?/i);
+            const title = this.sanitizeConversationTitle(match?.[1] || '', '').trim();
+            const content = source
+                .replace(/\n?\s*\[\[\s*NV_TITLE\s*:\s*([^\]]*?)\s*\]\]\s*$/i, '')
+                .replace(/^\s*\[\[\s*NV_TITLE\s*:\s*([^\]]*?)\s*\]\]\s*\n?/i, '');
+            return { title, content };
         }
 
         setupSpeechRecognition() {
